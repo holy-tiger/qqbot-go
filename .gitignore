@@ -1,0 +1,59 @@
+# ============================
+# CodeBuddy GitHub Repo Creator - Gitignore Rules
+# This file defines directories and files to be excluded from Git.
+# Lines starting with '#' are comments and will be ignored.
+# Empty lines are also ignored.
+# ============================
+
+# IDE and Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# Build output
+dist/
+build/
+out/
+*.min.js
+*.min.css
+
+# Dependencies
+node_modules/
+vendor/
+.venv/
+venv/
+
+# Cache
+.cache/
+.parcel-cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# CloudStudio / workspace config
+.cloudstudio-backup/
+
+# CodeBuddy internal
+.codebuddy/
