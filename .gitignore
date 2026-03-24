@@ -67,3 +67,7 @@ qqbot
 *.test
 *.out
 *.prof
+
+# QQ Bot config and data (may contain secrets)
+configs/config.yaml
+data/

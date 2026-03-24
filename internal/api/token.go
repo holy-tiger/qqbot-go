@@ -26,6 +26,36 @@ const (
 	retryDelay = 5 * time.Second
 )
 
+// flexNumber is a JSON number that can be unmarshaled from either a string or a number.
+type flexNumber int
+
+func (f *flexNumber) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		*f = 0
+		return nil
+	}
+	// Try as string first
+	if data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		var n int
+		if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+			return fmt.Errorf("flexNumber: cannot parse %q as int", s)
+		}
+		*f = flexNumber(n)
+		return nil
+	}
+	// Try as number
+	var n int
+	if err := json.Unmarshal(data, &n); err != nil {
+		return err
+	}
+	*f = flexNumber(n)
+	return nil
+}
+
 // TokenStatus represents the status of a cached token.
 type TokenStatus struct {
 	Status    string     `json:"status"` // "valid", "expired", "refreshing", "none"
@@ -126,8 +156,8 @@ func (c *TokenCache) fetchToken(ctx context.Context, appID, clientSecret string)
 	}
 
 	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
+		AccessToken string     `json:"access_token"`
+		ExpiresIn   flexNumber `json:"expires_in"`
 	}
 	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
 		return "", fmt.Errorf("parse token response: %w", err)
@@ -136,7 +166,7 @@ func (c *TokenCache) fetchToken(ctx context.Context, appID, clientSecret string)
 		return "", fmt.Errorf("empty access_token in response: %s", string(respBody))
 	}
 
-	expiresIn := tokenResp.ExpiresIn
+	expiresIn := int(tokenResp.ExpiresIn)
 	if expiresIn <= 0 {
 		expiresIn = 7200
 	}

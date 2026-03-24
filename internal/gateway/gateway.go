@@ -117,7 +117,7 @@ func (g *Gateway) connectLoop(ctx context.Context) {
 
 // connectOnce performs a single connection attempt with intent fallback.
 func (g *Gateway) connectOnce(ctx context.Context) error {
-	wsURL, err := g.getGatewayURL(ctx)
+	wsURL, token, err := g.getGatewayURLAndToken(ctx)
 	if err != nil {
 		return fmt.Errorf("get gateway URL: %w", err)
 	}
@@ -130,7 +130,7 @@ func (g *Gateway) connectOnce(ctx context.Context) error {
 		}
 
 		g.intentIndex = levelIdx
-		err := g.tryConnect(ctx, wsURL, levelIdx)
+		err := g.tryConnect(ctx, wsURL, token, levelIdx)
 		if err == nil {
 			return nil // connected successfully
 		}
@@ -142,7 +142,7 @@ func (g *Gateway) connectOnce(ctx context.Context) error {
 }
 
 // tryConnect attempts WebSocket connection at a given intent level.
-func (g *Gateway) tryConnect(ctx context.Context, wsURL string, levelIdx int) error {
+func (g *Gateway) tryConnect(ctx context.Context, wsURL, token string, levelIdx int) error {
 	dialer := websocket.Dialer{}
 	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
@@ -184,7 +184,7 @@ func (g *Gateway) tryConnect(ctx context.Context, wsURL string, levelIdx int) er
 		}{
 			Op: OpResume,
 			D: ResumeParams{
-				Token:     "QQBot test-token",
+				Token:     "QQBot " + token,
 				SessionID: g.sessionID,
 				Seq:       g.lastSeq,
 			},
@@ -200,7 +200,7 @@ func (g *Gateway) tryConnect(ctx context.Context, wsURL string, levelIdx int) er
 		}{
 			Op: OpIdentify,
 			D: IdentifyParams{
-				Token:   "QQBot test-token",
+				Token:   "QQBot " + token,
 				Intents: intentLevel.Intents,
 				Shard:   []int{0, 1},
 			},
@@ -431,26 +431,25 @@ func (g *Gateway) getConn() *websocket.Conn {
 	return g.conn
 }
 
-// getGatewayURL fetches the WebSocket gateway URL from the API.
-func (g *Gateway) getGatewayURL(ctx context.Context) (string, error) {
-	token := g.token
+// getGatewayURLAndToken fetches the WebSocket gateway URL and access token from the API.
+func (g *Gateway) getGatewayURLAndToken(ctx context.Context) (wsURL, token string, err error) {
+	token = g.token
 	if token == "" {
-		var err error
 		token, err = g.client.GetAccessToken(ctx)
 		if err != nil {
-			return "", fmt.Errorf("get access token: %w", err)
+			return "", "", fmt.Errorf("get access token: %w", err)
 		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.apiBase+"/gateway", nil)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return "", "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "QQBot "+token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request gateway: %w", err)
+		return "", "", fmt.Errorf("request gateway: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -458,14 +457,14 @@ func (g *Gateway) getGatewayURL(ctx context.Context) (string, error) {
 		URL string `json:"url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("parse gateway response: %w", err)
+		return "", "", fmt.Errorf("parse gateway response: %w", err)
 	}
 
 	if result.URL == "" {
-		return "", fmt.Errorf("empty gateway URL in response")
+		return "", "", fmt.Errorf("empty gateway URL in response")
 	}
 
-	return result.URL, nil
+	return result.URL, token, nil
 }
 
 // GetAccessToken exposes the token getter for the gateway.
