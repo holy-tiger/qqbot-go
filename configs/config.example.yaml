@@ -1,0 +1,57 @@
+# QQ Bot 配置文件示例
+# 使用方式: qqbot -config configs/config.yaml -health :8080
+
+qqbot:
+  # ====== 默认账号（顶层配置） ======
+  appId: "your-app-id"
+  clientSecret: "your-client-secret"
+  # 或从文件读取 secret（优先级高于 clientSecret）:
+  # clientSecretFile: "/path/to/secret.txt"
+  # 默认账号也支持从环境变量读取:
+  #   QQBOT_APP_ID -> appId 回退值
+  #   QQBOT_CLIENT_SECRET -> clientSecret 回退值
+  #   QQBOT_IMAGE_SERVER_BASE_URL -> imageServerBaseUrl 回退值
+
+  enabled: true
+  name: "My QQ Bot"
+  markdownSupport: true
+
+  # AI 系统提示词
+  systemPrompt: "You are a helpful assistant."
+
+  # 图床服务地址（用于本地图片转 URL 发送）
+  imageServerBaseUrl: "http://your-ip:18765"
+
+  # 私聊策略: "open" 允许所有私聊, "allowlist" 仅允许 allowFrom 列表
+  dmPolicy: "open"
+
+  # 私聊白名单（dmPolicy 为 "allowlist" 时生效）
+  allowFrom:
+    - "*"
+
+  # 语音直传格式（跳过 SILK 转换，直接上传的音频格式）
+  voiceDirectUploadFormats:
+    - "silk"
+
+  # 音频格式策略
+  audioFormatPolicy:
+    sttDirectFormats:        # STT 跳过转码直接识别的格式
+      - "wav"
+      - "mp3"
+    uploadDirectFormats:     # 上传跳过 SILK 编码的格式
+      - "silk"
+
+  # ====== 多账号配置 ======
+  # 每个命名账号拥有独立的 API 客户端、WebSocket 连接、消息队列和存储
+  accounts:
+    second-bot:
+      appId: "app-id-of-second-bot"
+      clientSecret: "secret-of-second-bot"
+      enabled: true
+      name: "Second Bot"
+      systemPrompt: "You are another helpful assistant."
+
+    # 禁用某个账号:
+    # disabled-bot:
+    #   appId: "app-id"
+    #   enabled: false

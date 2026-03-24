@@ -57,3 +57,13 @@ npm-debug.log*
 
 # CodeBuddy internal
 .codebuddy/
+
+# Go build output
+bin/
+*.exe
+qqbot
+
+# Go test / coverage
+*.test
+*.out
+*.prof
