@@ -41,7 +41,7 @@ func TestSendC2C(t *testing.T) {
 		},
 	}
 
-	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	err := mgr.SendC2C(context.Background(), "user1", "hello")
 	if err != nil {
 		t.Fatalf("SendC2C returned error: %v", err)
@@ -57,7 +57,7 @@ func TestSendC2C_Error(t *testing.T) {
 		},
 	}
 
-	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	err := mgr.SendC2C(context.Background(), "user1", "hello")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -81,7 +81,7 @@ func TestSendGroup(t *testing.T) {
 		},
 	}
 
-	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	err := mgr.SendGroup(context.Background(), "group1", "group hello")
 	if err != nil {
 		t.Fatalf("SendGroup returned error: %v", err)
@@ -97,7 +97,7 @@ func TestSendGroup_Error(t *testing.T) {
 		},
 	}
 
-	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	err := mgr.SendGroup(context.Background(), "group1", "hello")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -107,7 +107,7 @@ func TestSendGroup_Error(t *testing.T) {
 // TestSendToUser tests sending to a user with account validation.
 func TestSendToUser(t *testing.T) {
 	t.Run("known user succeeds", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := store.OpenTestDB(t)
 		us := store.NewKnownUsersStore(dir)
 		us.Record(store.KnownUser{
 			OpenID:    "user1",
@@ -130,7 +130,7 @@ func TestSendToUser(t *testing.T) {
 	})
 
 	t.Run("unknown user returns error", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := store.OpenTestDB(t)
 		us := store.NewKnownUsersStore(dir)
 		defer us.Close()
 
@@ -152,7 +152,7 @@ func TestSendToUser(t *testing.T) {
 // TestSendToGroup tests sending to a group with account validation.
 func TestSendToGroup(t *testing.T) {
 	t.Run("known group succeeds", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := store.OpenTestDB(t)
 		us := store.NewKnownUsersStore(dir)
 		us.Record(store.KnownUser{
 			OpenID:      "member1",
@@ -176,7 +176,7 @@ func TestSendToGroup(t *testing.T) {
 	})
 
 	t.Run("unknown group returns error", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := store.OpenTestDB(t)
 		us := store.NewKnownUsersStore(dir)
 		defer us.Close()
 
@@ -197,7 +197,7 @@ func TestSendToGroup(t *testing.T) {
 
 // TestBroadcast tests broadcasting to all known C2C users.
 func TestBroadcast(t *testing.T) {
-	dir := t.TempDir()
+	dir := store.OpenTestDB(t)
 	us := store.NewKnownUsersStore(dir)
 	us.Record(store.KnownUser{OpenID: "u1", Type: "c2c", AccountID: "acct1"})
 	us.Record(store.KnownUser{OpenID: "u2", Type: "c2c", AccountID: "acct1"})
@@ -230,7 +230,7 @@ func TestBroadcast(t *testing.T) {
 
 // TestBroadcastToGroup tests broadcasting to all known groups.
 func TestBroadcastToGroup(t *testing.T) {
-	dir := t.TempDir()
+	dir := store.OpenTestDB(t)
 	us := store.NewKnownUsersStore(dir)
 	us.Record(store.KnownUser{OpenID: "m1", Type: "group", GroupOpenID: "g1", AccountID: "acct1"})
 	us.Record(store.KnownUser{OpenID: "m2", Type: "group", GroupOpenID: "g2", AccountID: "acct1"})
@@ -266,7 +266,7 @@ func TestBroadcastToGroup(t *testing.T) {
 
 // TestGetUserStats tests retrieving user statistics.
 func TestGetUserStats(t *testing.T) {
-	dir := t.TempDir()
+	dir := store.OpenTestDB(t)
 	us := store.NewKnownUsersStore(dir)
 	us.Record(store.KnownUser{OpenID: "u1", Type: "c2c", AccountID: "acct1"})
 	us.Record(store.KnownUser{OpenID: "u2", Type: "c2c", AccountID: "acct1"})
@@ -287,7 +287,7 @@ func TestGetUserStats(t *testing.T) {
 
 // TestListUsers tests listing known users.
 func TestListUsers(t *testing.T) {
-	dir := t.TempDir()
+	dir := store.OpenTestDB(t)
 	us := store.NewKnownUsersStore(dir)
 	us.Record(store.KnownUser{OpenID: "u1", Type: "c2c", AccountID: "acct1"})
 	us.Record(store.KnownUser{OpenID: "u2", Type: "group", AccountID: "acct1"})

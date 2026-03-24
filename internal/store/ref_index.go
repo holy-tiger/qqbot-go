@@ -1,21 +1,18 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"sort"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	maxContentLength   = 500
-	maxRefEntries      = 50000
-	refTTLMS           = 7 * 24 * 60 * 60 * 1000 // 7 days
-	compactThreshold   = 2
-	compactMinLines    = 1000
+	maxContentLength = 500
+	maxRefEntries    = 50000
+	refTTLMS         = 7 * 24 * 60 * 60 * 1000 // 7 days
 )
 
 // RefAttachmentSummary is a summary of a message attachment.
@@ -39,154 +36,21 @@ type RefIndexEntry struct {
 	Attachments []RefAttachmentSummary `json:"attachments,omitempty"`
 }
 
-type refEntryInternal struct {
-	RefIndexEntry
-	createdAt int64
-}
-
 type refIndexLine struct {
-	K string         `json:"k"`
-	V RefIndexEntry  `json:"v"`
-	T int64          `json:"t"`
+	K string        `json:"k"`
+	V RefIndexEntry `json:"v"`
+	T int64         `json:"t"`
 }
 
-// RefIndexStore manages the reference message index with JSONL persistence.
+// RefIndexStore manages the reference message index with SQLite persistence.
 type RefIndexStore struct {
-	dir        string
-	filePath   string
-	mu         sync.Mutex
-	cache      map[string]*refEntryInternal
-	totalLines int
-	loaded     bool
+	db *sql.DB
+	mu sync.Mutex
 }
 
-// NewRefIndexStore creates a new store backed by dir.
-func NewRefIndexStore(dir string) *RefIndexStore {
-	return &RefIndexStore{
-		dir:      dir,
-		filePath: filepath.Join(dir, "ref-index.jsonl"),
-		cache:    make(map[string]*refEntryInternal),
-	}
-}
-
-func (s *RefIndexStore) loadLocked() {
-	if s.loaded {
-		return
-	}
-	s.loaded = true
-
-	data, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return
-	}
-
-	now := time.Now().UnixMilli()
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		s.totalLines++
-
-		var entry refIndexLine
-		if err := json.Unmarshal([]byte(trimmed), &entry); err != nil {
-			continue
-		}
-		if entry.K == "" || entry.V.Content == "" && len(entry.V.Attachments) == 0 || entry.T == 0 {
-			continue
-		}
-
-		if now-entry.T > refTTLMS {
-			continue
-		}
-
-		s.cache[entry.K] = &refEntryInternal{
-			RefIndexEntry: entry.V,
-			createdAt:     entry.T,
-		}
-	}
-
-	if s.shouldCompactLocked() {
-		s.compactLocked()
-	}
-}
-
-func (s *RefIndexStore) shouldCompactLocked() bool {
-	return s.totalLines > s.cacheSizeLocked()*compactThreshold && s.totalLines > compactMinLines
-}
-
-func (s *RefIndexStore) cacheSizeLocked() int {
-	return len(s.cache)
-}
-
-func (s *RefIndexStore) evictIfNeeded() {
-	if len(s.cache) < maxRefEntries {
-		return
-	}
-
-	now := time.Now().UnixMilli()
-	for k, v := range s.cache {
-		if now-v.createdAt > refTTLMS {
-			delete(s.cache, k)
-		}
-	}
-
-	if len(s.cache) >= maxRefEntries {
-		entries := make([]struct {
-			key string
-			t   int64
-		}, 0, len(s.cache))
-		for k, v := range s.cache {
-			entries = append(entries, struct {
-				key string
-				t   int64
-			}{k, v.createdAt})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].t < entries[j].t
-		})
-		removeCount := len(entries) - maxRefEntries + 1000
-		if removeCount > len(entries) {
-			removeCount = len(entries)
-		}
-		for i := 0; i < removeCount; i++ {
-			delete(s.cache, entries[i].key)
-		}
-	}
-}
-
-func (s *RefIndexStore) appendLine(line refIndexLine) {
-	os.MkdirAll(s.dir, 0755)
-	f, err := os.OpenFile(s.filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	data, _ := json.Marshal(line)
-	f.Write(data)
-	f.Write([]byte("\n"))
-	s.totalLines++
-}
-
-func (s *RefIndexStore) compactLocked() {
-	tmpPath := s.filePath + ".tmp"
-	lines := make([]string, 0, len(s.cache))
-	for k, entry := range s.cache {
-		line := refIndexLine{
-			K: k,
-			V: entry.RefIndexEntry,
-			T: entry.createdAt,
-		}
-		data, _ := json.Marshal(line)
-		lines = append(lines, string(data))
-	}
-
-	content := strings.Join(lines, "\n") + "\n"
-	os.MkdirAll(s.dir, 0755)
-	os.WriteFile(tmpPath, []byte(content), 0644)
-	os.Rename(tmpPath, s.filePath)
-	s.totalLines = len(s.cache)
+// NewRefIndexStore creates a new store backed by the shared DB.
+func NewRefIndexStore(db *DB) *RefIndexStore {
+	return &RefIndexStore{db: db.SQLDB()}
 }
 
 // Set stores a ref index entry.
@@ -194,26 +58,30 @@ func (s *RefIndexStore) Set(refIdx string, entry RefIndexEntry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.loadLocked()
-	s.evictIfNeeded()
-
-	now := time.Now().UnixMilli()
-
-	// Truncate content
 	if len(entry.Content) > maxContentLength {
 		entry.Content = entry.Content[:maxContentLength]
 	}
 
-	s.cache[refIdx] = &refEntryInternal{
-		RefIndexEntry: entry,
-		createdAt:     now,
+	attJSON, _ := json.Marshal(entry.Attachments)
+	now := time.Now().UnixMilli()
+
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO ref_index
+		(ref_key, content, sender_id, sender_name, timestamp, is_bot, attachments, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		refIdx, entry.Content, entry.SenderID, entry.SenderName,
+		entry.Timestamp, entry.IsBot, string(attJSON), now)
+	if err != nil {
+		fmt.Printf("[store] RefIndex Set: %v\n", err)
+		return
 	}
 
-	s.appendLine(refIndexLine{K: refIdx, V: entry, T: now})
+	// Evict expired entries.
+	expiry := now - refTTLMS
+	s.db.Exec(`DELETE FROM ref_index WHERE created_at < ?`, expiry)
 
-	if s.shouldCompactLocked() {
-		s.compactLocked()
-	}
+	// Cap at max entries.
+	s.db.Exec(`DELETE FROM ref_index WHERE id NOT IN (
+		SELECT id FROM ref_index ORDER BY created_at DESC LIMIT ?)`, maxRefEntries)
 }
 
 // Get retrieves a ref index entry. Returns nil if not found or expired.
@@ -221,20 +89,35 @@ func (s *RefIndexStore) Get(refIdx string) *RefIndexEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.loadLocked()
+	var content, senderID, senderName string
+	var timestamp int64
+	var isBot int
+	var attJSON string
+	var createdAt int64
 
-	entry, ok := s.cache[refIdx]
-	if !ok {
+	err := s.db.QueryRow(`SELECT content, sender_id, sender_name, timestamp, is_bot, attachments, created_at
+		FROM ref_index WHERE ref_key = ?`, refIdx).Scan(
+		&content, &senderID, &senderName, &timestamp, &isBot, &attJSON, &createdAt)
+	if err != nil {
 		return nil
 	}
 
-	if time.Now().UnixMilli()-entry.createdAt > refTTLMS {
-		delete(s.cache, refIdx)
+	if time.Now().UnixMilli()-createdAt > refTTLMS {
+		s.db.Exec(`DELETE FROM ref_index WHERE ref_key = ?`, refIdx)
 		return nil
 	}
 
-	result := entry.RefIndexEntry
-	return &result
+	var attachments []RefAttachmentSummary
+	json.Unmarshal([]byte(attJSON), &attachments)
+
+	return &RefIndexEntry{
+		Content:     content,
+		SenderID:    senderID,
+		SenderName:  senderName,
+		Timestamp:   timestamp,
+		IsBot:       isBot == 1,
+		Attachments: attachments,
+	}
 }
 
 // FormatForAgent formats a ref entry for AI context injection.
@@ -308,27 +191,18 @@ func FormatForAgent(entry RefIndexEntry) string {
 	return strings.Join(parts, " ")
 }
 
-// Flush compacts the store if needed.
-func (s *RefIndexStore) Flush() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Flush is a no-op for SQLite backend.
+func (s *RefIndexStore) Flush() {}
 
-	s.loadLocked()
-	if s.shouldCompactLocked() {
-		s.compactLocked()
-	}
-}
-
-// Close is an alias for Flush for cleanup.
-func (s *RefIndexStore) Close() {
-	s.Flush()
-}
+// Close is a no-op for SQLite backend.
+func (s *RefIndexStore) Close() {}
 
 // Stats returns store statistics.
 func (s *RefIndexStore) Stats() (size, maxEntries, totalLines int, filePath string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.loadLocked()
-	return len(s.cache), maxRefEntries, s.totalLines, s.filePath
+	var count int
+	s.db.QueryRow(`SELECT COUNT(*) FROM ref_index`).Scan(&count)
+	return count, maxRefEntries, count, "" // filePath no longer relevant
 }

@@ -2,7 +2,6 @@ package store
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -10,8 +9,7 @@ import (
 )
 
 func TestRefIndexStore_SetAndGet(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
+	s := NewRefIndexStore(openTestDB(t))
 	defer s.Close()
 
 	entry := RefIndexEntry{
@@ -34,8 +32,7 @@ func TestRefIndexStore_SetAndGet(t *testing.T) {
 }
 
 func TestRefIndexStore_GetNotFound(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
+	s := NewRefIndexStore(openTestDB(t))
 	defer s.Close()
 
 	got := s.Get("NONEXISTENT")
@@ -45,8 +42,7 @@ func TestRefIndexStore_GetNotFound(t *testing.T) {
 }
 
 func TestRefIndexStore_Overwrite(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
+	s := NewRefIndexStore(openTestDB(t))
 	defer s.Close()
 
 	s.Set("REFIDX_001", RefIndexEntry{Content: "first", SenderID: "u1", Timestamp: 1000})
@@ -62,8 +58,7 @@ func TestRefIndexStore_Overwrite(t *testing.T) {
 }
 
 func TestRefIndexStore_TruncateContent(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
+	s := NewRefIndexStore(openTestDB(t))
 	defer s.Close()
 
 	longContent := strings.Repeat("x", 1000)
@@ -79,18 +74,16 @@ func TestRefIndexStore_TruncateContent(t *testing.T) {
 }
 
 func TestRefIndexStore_TTLExpiry(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
+	db := openTestDB(t)
+	s := NewRefIndexStore(db)
 	defer s.Close()
 
-	// Manually insert with old timestamp
-	s.mu.Lock()
-	s.loadLocked()
-	s.cache["REFIDX_OLD"] = &refEntryInternal{
-		RefIndexEntry: RefIndexEntry{Content: "old", SenderID: "u1", Timestamp: 1000},
-		createdAt:     time.Now().UnixMilli() - (7*24*60*60*1000 + 1000), // expired
-	}
-	s.mu.Unlock()
+	// Insert with old created_at directly
+	oldTime := time.Now().UnixMilli() - (7*24*60*60*1000 + 1000)
+	db.SQLDB().Exec(`INSERT OR REPLACE INTO ref_index
+		(ref_key, content, sender_id, sender_name, timestamp, is_bot, attachments, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"REFIDX_OLD", "old", "u1", "", 1000, 0, "[]", oldTime)
 
 	got := s.Get("REFIDX_OLD")
 	if got != nil {
@@ -99,11 +92,9 @@ func TestRefIndexStore_TTLExpiry(t *testing.T) {
 }
 
 func TestRefIndexStore_EvictionAtMax(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
+	s := NewRefIndexStore(openTestDB(t))
 	defer s.Close()
 
-	// Fill to max and beyond
 	for i := 0; i < 50100; i++ {
 		s.Set("REFIDX_"+fmt.Sprintf("%d", i), RefIndexEntry{Content: "msg", SenderID: "u", Timestamp: int64(i)})
 	}
@@ -111,90 +102,6 @@ func TestRefIndexStore_EvictionAtMax(t *testing.T) {
 	size, _, _, _ := s.Stats()
 	if size > 50000 {
 		t.Errorf("expected size <= 50000, got %d", size)
-	}
-}
-
-func TestRefIndexStore_Compact(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
-	defer s.Close()
-
-	// Write 600 unique entries
-	for i := 0; i < 600; i++ {
-		s.Set(fmt.Sprintf("REFIDX_%d", i), RefIndexEntry{Content: "original", SenderID: "u", Timestamp: int64(i)})
-	}
-	// Overwrite all 600 entries (totalLines now = 1200, cacheSize = 600)
-	for i := 0; i < 600; i++ {
-		s.Set(fmt.Sprintf("REFIDX_%d", i), RefIndexEntry{Content: "updated", SenderID: "u", Timestamp: int64(i)})
-	}
-
-	// Before flush: totalLines=1200, cacheSize=600, ratio=2x. Need > 2x.
-	// The condition is totalLines > cacheSize*2 && totalLines > 1000
-	// 1200 > 1200 is false, so won't compact yet.
-	// Overwrite one more time
-	for i := 0; i < 10; i++ {
-		s.Set(fmt.Sprintf("REFIDX_%d", i), RefIndexEntry{Content: "updated2", SenderID: "u", Timestamp: int64(i)})
-	}
-	// Now totalLines=1210, cacheSize=600, 1210 > 1200 && 1210 > 1000 → compact!
-
-	s.Flush()
-
-	// After compact, totalLines should equal cacheSize
-	_, _, totalLines, _ := s.Stats()
-	if totalLines > 700 {
-		t.Errorf("expected compacted file with totalLines near cacheSize, totalLines=%d", totalLines)
-	}
-}
-
-func TestRefIndexStore_JSONLFormat(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
-	defer s.Close()
-
-	s.Set("REFIDX_001", RefIndexEntry{Content: "test content", SenderID: "user1", Timestamp: 1234567890})
-	s.Close()
-
-	// Read the JSONL file
-	fp := dir + "/ref-index.jsonl"
-	data, err := os.ReadFile(fp)
-	if err != nil {
-		t.Fatalf("expected JSONL file to exist: %v", err)
-	}
-
-	if !strings.Contains(string(data), `"k":"REFIDX_001"`) {
-		t.Error("expected JSONL to contain key 'k'")
-	}
-	if !strings.Contains(string(data), `"v":{`) {
-		t.Error("expected JSONL to contain value 'v'")
-	}
-	if !strings.Contains(string(data), `"t":`) {
-		t.Error("expected JSONL to contain timestamp 't'")
-	}
-}
-
-func TestRefIndexStore_LoadFromFile(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now().UnixMilli()
-
-	// Pre-write JSONL
-	content := fmt.Sprintf(`{"k":"REFIDX_001","v":{"content":"loaded msg","sender_id":"u1","timestamp":1000},"t":%d}`+"\n", now) +
-		fmt.Sprintf(`{"k":"REFIDX_002","v":{"content":"expired msg","sender_id":"u2","timestamp":2000},"t":%d}`+"\n", now-(7*24*60*60*1000+1))
-	os.WriteFile(dir+"/ref-index.jsonl", []byte(content), 0644)
-
-	s := NewRefIndexStore(dir)
-	defer s.Close()
-
-	got := s.Get("REFIDX_001")
-	if got == nil {
-		t.Fatal("expected to load valid entry")
-	}
-	if got.Content != "loaded msg" {
-		t.Errorf("expected 'loaded msg', got '%s'", got.Content)
-	}
-
-	got = s.Get("REFIDX_002")
-	if got != nil {
-		t.Error("expected expired entry to be nil")
 	}
 }
 
@@ -237,14 +144,13 @@ func TestRefIndexStore_FormatForAgent(t *testing.T) {
 }
 
 func TestRefIndexStore_Stats(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
+	s := NewRefIndexStore(openTestDB(t))
 	defer s.Close()
 
 	s.Set("REFIDX_001", RefIndexEntry{Content: "a", SenderID: "u1", Timestamp: 1})
 	s.Set("REFIDX_002", RefIndexEntry{Content: "b", SenderID: "u1", Timestamp: 2})
 
-	size, maxEntries, totalLines, filePath := s.Stats()
+	size, maxEntries, totalLines, _ := s.Stats()
 	if size != 2 {
 		t.Errorf("expected size=2, got %d", size)
 	}
@@ -254,90 +160,51 @@ func TestRefIndexStore_Stats(t *testing.T) {
 	if totalLines != 2 {
 		t.Errorf("expected totalLines=2, got %d", totalLines)
 	}
-	if !strings.HasSuffix(filePath, "ref-index.jsonl") {
-		t.Errorf("unexpected filePath: %s", filePath)
-	}
 }
 
-func TestRefIndexStore_SkipInvalidLines(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now().UnixMilli()
-
-	// Write JSONL with invalid lines
-	content := fmt.Sprintf(`{"k":"REFIDX_001","v":{"content":"valid","sender_id":"u","timestamp":1},"t":%d}`+"\n", now) +
-		"invalid json line\n" +
-		`{"k":"","v":{},"t":1}` + "\n" +
-		fmt.Sprintf(`{"k":"REFIDX_002","v":{"content":"also valid","sender_id":"u","timestamp":2},"t":%d}`+"\n", now)
-	os.WriteFile(dir+"/ref-index.jsonl", []byte(content), 0644)
-
-	s := NewRefIndexStore(dir)
-	defer s.Close()
-
-	_, _, totalLines, _ := s.Stats()
-	// Should count all non-empty lines (including invalid/unparseable)
-	if totalLines != 4 {
-		t.Errorf("expected totalLines=4, got %d", totalLines)
-	}
-
-	got1 := s.Get("REFIDX_001")
-	got2 := s.Get("REFIDX_002")
-	if got1 == nil || got2 == nil {
-		t.Error("expected valid entries to be loaded")
-	}
-}
-
-func TestRefIndexStore_LazyLoad(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
-	defer s.Close()
-
-	// File doesn't exist yet, should not error
-	got := s.Get("NONEXISTENT")
-	if got != nil {
-		t.Error("expected nil when file doesn't exist")
-	}
-}
-
-func TestRefIndexStore_PersistentAppend(t *testing.T) {
+func TestRefIndexStore_Persistence(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create store, write some data
-	s1 := NewRefIndexStore(dir)
+	db1, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1 := NewRefIndexStore(db1)
 	s1.Set("REFIDX_001", RefIndexEntry{Content: "first", SenderID: "u1", Timestamp: 1})
-	s1.Close()
+	db1.Close()
 
-	// Open new store instance, should load data
-	s2 := NewRefIndexStore(dir)
-	defer s2.Close()
+	db2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+	s2 := NewRefIndexStore(db2)
 
 	got := s2.Get("REFIDX_001")
 	if got == nil {
-		t.Fatal("expected to load from persisted file")
+		t.Fatal("expected to load from persisted SQLite")
 	}
 	if got.Content != "first" {
 		t.Errorf("expected 'first', got '%s'", got.Content)
 	}
 }
 
-func TestRefIndexStore_FileCorruption(t *testing.T) {
-	dir := t.TempDir()
-
-	// Write corrupted data
-	os.WriteFile(dir+"/ref-index.jsonl", []byte("{{bad json}}}\n"), 0644)
-
-	s := NewRefIndexStore(dir)
+func TestRefIndexStore_FlushBasic(t *testing.T) {
+	// Flush is a no-op for SQLite, should not panic
+	s := NewRefIndexStore(openTestDB(t))
 	defer s.Close()
 
-	// Should not panic, just return empty
+	s.Set("REFIDX_001", RefIndexEntry{Content: "flush test", SenderID: "u", Timestamp: 1})
+	s.Flush()
+
 	got := s.Get("REFIDX_001")
-	if got != nil {
-		t.Error("expected nil for corrupted file")
+	if got == nil {
+		t.Error("expected entry after flush")
 	}
 }
 
 func TestRefIndexStore_ConcurrentSetGet(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
+	s := NewRefIndexStore(openTestDB(t))
 	defer s.Close()
 
 	var done sync.WaitGroup
@@ -358,36 +225,44 @@ func TestRefIndexStore_ConcurrentSetGet(t *testing.T) {
 	}
 }
 
-func TestRefIndexStore_IgnoreEmptyLines(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now().UnixMilli()
+func TestRefIndexStore_LazyInit(t *testing.T) {
+	// DB doesn't exist yet, should not error
+	db, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 
-	content := "\n\n" +
-		fmt.Sprintf(`{"k":"REFIDX_001","v":{"content":"valid","sender_id":"u","timestamp":1},"t":%d}`+"\n", now) +
-		"\n"
-	os.WriteFile(dir+"/ref-index.jsonl", []byte(content), 0644)
-
-	s := NewRefIndexStore(dir)
-	defer s.Close()
-
-	got := s.Get("REFIDX_001")
-	if got == nil {
-		t.Error("expected valid entry to be loaded, skipping empty lines")
+	s := NewRefIndexStore(db)
+	got := s.Get("NONEXISTENT")
+	if got != nil {
+		t.Error("expected nil when no entries exist")
 	}
 }
 
-func TestRefIndexStore_FlushBasic(t *testing.T) {
-	dir := t.TempDir()
-	s := NewRefIndexStore(dir)
+func TestRefIndexStore_WithAttachments(t *testing.T) {
+	s := NewRefIndexStore(openTestDB(t))
 	defer s.Close()
 
-	s.Set("REFIDX_001", RefIndexEntry{Content: "flush test", SenderID: "u", Timestamp: 1})
+	entry := RefIndexEntry{
+		Content:   "msg with attachment",
+		SenderID:  "u1",
+		Timestamp: 1000,
+		Attachments: []RefAttachmentSummary{
+			{Type: "image", Filename: "test.png", URL: "http://example.com/test.png"},
+			{Type: "voice", Transcript: "hello", TranscriptSource: "stt"},
+		},
+	}
+	s.Set("REFIDX_ATT", entry)
 
-	// Flush should compact if needed
-	s.Flush()
-
-	fp := dir + "/ref-index.jsonl"
-	if _, err := os.Stat(fp); err != nil {
-		t.Fatalf("expected file to exist after flush: %v", err)
+	got := s.Get("REFIDX_ATT")
+	if got == nil {
+		t.Fatal("expected entry")
+	}
+	if len(got.Attachments) != 2 {
+		t.Errorf("expected 2 attachments, got %d", len(got.Attachments))
+	}
+	if got.Attachments[0].Type != "image" {
+		t.Errorf("expected image attachment, got %s", got.Attachments[0].Type)
 	}
 }

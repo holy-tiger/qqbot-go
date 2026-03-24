@@ -35,7 +35,7 @@ func (s *trackingSender) SendProactiveGroupMessage(ctx context.Context, groupOpe
 
 // TestNewScheduler tests constructor.
 func TestNewScheduler(t *testing.T) {
-	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 	if s == nil {
 		t.Fatal("expected non-nil scheduler")
@@ -44,7 +44,7 @@ func TestNewScheduler(t *testing.T) {
 
 // TestAddReminder tests adding a reminder job.
 func TestAddReminder(t *testing.T) {
-	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 
 	job := ReminderJob{
@@ -74,7 +74,7 @@ func TestAddReminder(t *testing.T) {
 
 // TestCancelReminder tests canceling a reminder job.
 func TestCancelReminder(t *testing.T) {
-	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 
 	job := ReminderJob{
@@ -105,7 +105,7 @@ func TestCancelReminder(t *testing.T) {
 
 // TestGetReminders tests listing reminders.
 func TestGetReminders(t *testing.T) {
-	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 
 	s.AddReminder(ReminderJob{ID: "j1", Content: "a", TargetType: "c2c", TargetAddress: "u1", NextRun: time.Now().Add(1 * time.Hour), CreatedAt: time.Now()})
@@ -120,7 +120,7 @@ func TestGetReminders(t *testing.T) {
 // TestSchedulerDueReminder tests that due reminders are executed.
 func TestSchedulerDueReminder(t *testing.T) {
 	sender := &trackingSender{}
-	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 
 	// Add a job that is already due
@@ -156,7 +156,7 @@ func TestSchedulerDueReminder(t *testing.T) {
 // TestSchedulerNotDueReminder tests that future reminders are not sent prematurely.
 func TestSchedulerNotDueReminder(t *testing.T) {
 	sender := &trackingSender{}
-	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 
 	// Add a job far in the future
@@ -183,7 +183,7 @@ func TestSchedulerNotDueReminder(t *testing.T) {
 // TestSchedulerGroupReminder tests group reminder execution.
 func TestSchedulerGroupReminder(t *testing.T) {
 	sender := &trackingSender{}
-	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 
 	s.AddReminder(ReminderJob{
@@ -208,7 +208,7 @@ func TestSchedulerGroupReminder(t *testing.T) {
 
 // TestSchedulerStop tests that Stop cancels the scheduler.
 func TestSchedulerStop(t *testing.T) {
-	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -222,7 +222,7 @@ func TestSchedulerStop(t *testing.T) {
 // TestSchedulerRecurringReminder tests that a recurring schedule recalculates next run.
 func TestSchedulerRecurringReminder(t *testing.T) {
 	sender := &trackingSender{}
-	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(sender, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 
 	// Use a simple cron-like schedule: "every 1 second"
@@ -255,7 +255,7 @@ func TestSchedulerRecurringReminder(t *testing.T) {
 
 // TestSchedulerConcurrentAccess tests thread safety.
 func TestSchedulerConcurrentAccess(t *testing.T) {
-	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(t.TempDir()))
+	mgr := NewProactiveManager(&mockSender{}, store.NewKnownUsersStore(store.OpenTestDB(t)))
 	s := NewScheduler(mgr)
 
 	var wg sync.WaitGroup

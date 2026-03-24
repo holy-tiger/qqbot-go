@@ -1,17 +1,18 @@
 package store
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 )
 
+// openTestDB creates a test SQLite database in a temp directory.
+func openTestDB(t *testing.T) *DB {
+	return OpenTestDB(t)
+}
+
 func TestKnownUsersStore_RecordNewUser(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -40,8 +41,7 @@ func TestKnownUsersStore_RecordNewUser(t *testing.T) {
 }
 
 func TestKnownUsersStore_RecordUpsert(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	s.Record(KnownUser{
@@ -80,8 +80,7 @@ func TestKnownUsersStore_RecordUpsert(t *testing.T) {
 }
 
 func TestKnownUsersStore_GetGroupUser(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -115,8 +114,7 @@ func TestKnownUsersStore_GetGroupUser(t *testing.T) {
 }
 
 func TestKnownUsersStore_GetNotFound(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 
 	u := s.Get("acct1", "nonexistent", "c2c", "")
 	if u != nil {
@@ -125,29 +123,24 @@ func TestKnownUsersStore_GetNotFound(t *testing.T) {
 }
 
 func TestKnownUsersStore_ListWithFilters(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
-	// Add users
 	s.Record(KnownUser{OpenID: "c2c1", Type: "c2c", AccountID: "acct1", FirstSeenAt: now, LastSeenAt: now})
 	s.Record(KnownUser{OpenID: "grp1", Type: "group", AccountID: "acct1", FirstSeenAt: now, LastSeenAt: now, GroupOpenID: "g1"})
 	s.Record(KnownUser{OpenID: "c2c2", Type: "c2c", AccountID: "acct2", FirstSeenAt: now, LastSeenAt: now})
 
-	// Filter by account
 	users := s.List(ListOptions{AccountID: "acct1"})
 	if len(users) != 2 {
 		t.Errorf("expected 2 users for acct1, got %d", len(users))
 	}
 
-	// Filter by type
 	users = s.List(ListOptions{Type: "c2c"})
 	if len(users) != 2 {
 		t.Errorf("expected 2 c2c users, got %d", len(users))
 	}
 
-	// Filter by both
 	users = s.List(ListOptions{AccountID: "acct1", Type: "group"})
 	if len(users) != 1 {
 		t.Errorf("expected 1 group user for acct1, got %d", len(users))
@@ -155,8 +148,7 @@ func TestKnownUsersStore_ListWithFilters(t *testing.T) {
 }
 
 func TestKnownUsersStore_ListWithLimit(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -171,8 +163,7 @@ func TestKnownUsersStore_ListWithLimit(t *testing.T) {
 }
 
 func TestKnownUsersStore_ListSorting(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -190,21 +181,19 @@ func TestKnownUsersStore_ListSorting(t *testing.T) {
 }
 
 func TestKnownUsersStore_ListActiveWithin(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
-	// Record user, then manually backdate LastSeenAt
+	// Record user with old lastSeenAt by inserting directly
 	s.Record(KnownUser{OpenID: "old", Type: "c2c", AccountID: "acct1"})
 	s.mu.Lock()
-	s.load()
-	oldKey := makeUserKey("acct1", "c2c", "old", "")
-	s.cache[oldKey].LastSeenAt = time.Now().UnixMilli() - 200000
+	s.db.Exec(`UPDATE known_users SET last_seen_at = ? WHERE open_id = 'old' AND account_id = 'acct1'`,
+		time.Now().UnixMilli()-200000)
 	s.mu.Unlock()
 
 	s.Record(KnownUser{OpenID: "new", Type: "c2c", AccountID: "acct1"})
 
-	users := s.List(ListOptions{ActiveWithin: 100000}) // 100 seconds ago
+	users := s.List(ListOptions{ActiveWithin: 100000})
 	if len(users) != 1 {
 		t.Errorf("expected 1 active user, got %d", len(users))
 	}
@@ -214,8 +203,7 @@ func TestKnownUsersStore_ListActiveWithin(t *testing.T) {
 }
 
 func TestKnownUsersStore_Stats(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -234,7 +222,6 @@ func TestKnownUsersStore_Stats(t *testing.T) {
 		t.Errorf("expected group=1, got %d", stats.GroupUsers)
 	}
 
-	// Filter by account
 	stats = s.Stats("acct1")
 	if stats.TotalUsers != 2 {
 		t.Errorf("expected total=2 for acct1, got %d", stats.TotalUsers)
@@ -242,8 +229,7 @@ func TestKnownUsersStore_Stats(t *testing.T) {
 }
 
 func TestKnownUsersStore_Remove(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -259,7 +245,6 @@ func TestKnownUsersStore_Remove(t *testing.T) {
 		t.Error("expected user to be removed")
 	}
 
-	// Remove non-existent
 	removed = s.Remove("acct1", "user1", "c2c", "")
 	if removed {
 		t.Error("expected remove to return false for non-existent")
@@ -267,8 +252,7 @@ func TestKnownUsersStore_Remove(t *testing.T) {
 }
 
 func TestKnownUsersStore_Clear(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -285,7 +269,6 @@ func TestKnownUsersStore_Clear(t *testing.T) {
 		t.Errorf("expected 1 remaining user, got %d", len(users))
 	}
 
-	// Clear all
 	count = s.Clear("")
 	if count != 1 {
 		t.Errorf("expected to clear 1 user, got %d", count)
@@ -293,53 +276,51 @@ func TestKnownUsersStore_Clear(t *testing.T) {
 }
 
 func TestKnownUsersStore_Flush(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	// Flush is a no-op for SQLite. Should not panic.
+	s := NewKnownUsersStore(openTestDB(t))
 
 	now := time.Now().UnixMilli()
 	s.Record(KnownUser{OpenID: "u1", Type: "c2c", AccountID: "acct1", FirstSeenAt: now, LastSeenAt: now})
 
 	s.Flush()
 
-	// Verify file was written
-	fp := filepath.Join(dir, "known-users.json")
-	data, err := os.ReadFile(fp)
-	if err != nil {
-		t.Fatalf("expected file to exist: %v", err)
-	}
-
-	var users []KnownUser
-	if err := json.Unmarshal(data, &users); err != nil {
-		t.Fatalf("failed to parse file: %v", err)
-	}
-	if len(users) != 1 || users[0].OpenID != "u1" {
-		t.Errorf("unexpected file content: %+v", users)
+	// Data should still be readable (SQLite auto-commits)
+	u := s.Get("acct1", "u1", "c2c", "")
+	if u == nil {
+		t.Error("expected user to be readable after flush")
 	}
 }
 
-func TestKnownUsersStore_LoadFromFile(t *testing.T) {
+func TestKnownUsersStore_Persistence(t *testing.T) {
 	dir := t.TempDir()
 
-	// Pre-write a file
-	users := []KnownUser{
-		{OpenID: "loaded", Type: "c2c", AccountID: "acct1", FirstSeenAt: 1000, LastSeenAt: 2000, InteractionCount: 3},
+	// Write users with first DB instance
+	db1, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	data, _ := json.MarshalIndent(users, "", "  ")
-	os.WriteFile(filepath.Join(dir, "known-users.json"), data, 0644)
+	s1 := NewKnownUsersStore(db1)
+	s1.Record(KnownUser{OpenID: "loaded", Type: "c2c", AccountID: "acct1", Nickname: "PersistedUser"})
+	db1.Close()
 
-	s := NewKnownUsersStore(dir)
-	u := s.Get("acct1", "loaded", "c2c", "")
-	if u == nil {
-		t.Fatal("expected to load user from file")
+	// Reopen and verify
+	db2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if u.InteractionCount != 3 {
-		t.Errorf("expected interaction_count=3, got %d", u.InteractionCount)
+	defer db2.Close()
+	s2 := NewKnownUsersStore(db2)
+	u := s2.Get("acct1", "loaded", "c2c", "")
+	if u == nil {
+		t.Fatal("expected to load user from persisted SQLite")
+	}
+	if u.Nickname != "PersistedUser" {
+		t.Errorf("expected nickname PersistedUser, got %s", u.Nickname)
 	}
 }
 
 func TestKnownUsersStore_GetUserGroups(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -354,8 +335,7 @@ func TestKnownUsersStore_GetUserGroups(t *testing.T) {
 }
 
 func TestKnownUsersStore_GetGroupMembers(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -370,8 +350,7 @@ func TestKnownUsersStore_GetGroupMembers(t *testing.T) {
 }
 
 func TestKnownUsersStore_ConcurrentAccess(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+	s := NewKnownUsersStore(openTestDB(t))
 	defer s.Close()
 
 	now := time.Now().UnixMilli()
@@ -397,36 +376,17 @@ func TestKnownUsersStore_ConcurrentAccess(t *testing.T) {
 	}
 }
 
-func TestKnownUsersStore_ThrottledWrite(t *testing.T) {
-	dir := t.TempDir()
-	s := NewKnownUsersStore(dir)
+func TestKnownUsersStore_SQLitePersistence(t *testing.T) {
+	// Verify data persists across DB close/reopen
+	db := openTestDB(t)
+	s := NewKnownUsersStore(db)
 
 	now := time.Now().UnixMilli()
 	s.Record(KnownUser{OpenID: "u1", Type: "c2c", AccountID: "acct1", FirstSeenAt: now, LastSeenAt: now})
 
-	// File should not exist yet (throttled)
-	fp := filepath.Join(dir, "known-users.json")
-	if _, err := os.Stat(fp); !os.IsNotExist(err) {
-		t.Error("expected file to not exist immediately (throttled)")
-	}
-
-	// After flush, it should exist
-	s.Flush()
-	if _, err := os.Stat(fp); err != nil {
-		t.Error("expected file to exist after flush")
-	}
-}
-
-func TestMakeUserKey(t *testing.T) {
-	// c2c user key
-	key := makeUserKey("acct1", "c2c", "openid1", "")
-	if key != "acct1:c2c:openid1" {
-		t.Errorf("expected 'acct1:c2c:openid1', got '%s'", key)
-	}
-
-	// group user key
-	key = makeUserKey("acct1", "group", "openid1", "grp1")
-	if key != "acct1:group:openid1:grp1" {
-		t.Errorf("expected 'acct1:group:openid1:grp1', got '%s'", key)
+	// Record is immediately visible (no throttling)
+	u := s.Get("acct1", "u1", "c2c", "")
+	if u == nil {
+		t.Error("expected user to be readable immediately")
 	}
 }

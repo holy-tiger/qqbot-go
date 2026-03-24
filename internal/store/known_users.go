@@ -1,10 +1,8 @@
 package store
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"sort"
+	"database/sql"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -40,85 +38,15 @@ type UserStats struct {
 	ActiveIn7d  int `json:"active_in_7d"`
 }
 
-const saveThrottleMs = 5000
-
-// KnownUsersStore manages persistent storage of known users.
+// KnownUsersStore manages persistent storage of known users using SQLite.
 type KnownUsersStore struct {
-	dir       string
-	filePath  string
-	mu        sync.Mutex
-	cache     map[string]*KnownUser
-	dirty     bool
-	saveTimer *time.Timer
-	closed    bool
+	db *sql.DB
+	mu sync.Mutex
 }
 
-// NewKnownUsersStore creates a new store backed by dir.
-func NewKnownUsersStore(dir string) *KnownUsersStore {
-	return &KnownUsersStore{
-		dir:      dir,
-		filePath: filepath.Join(dir, "known-users.json"),
-		cache:    make(map[string]*KnownUser),
-	}
-}
-
-func makeUserKey(accountID, userType, openID, groupOpenID string) string {
-	base := accountID + ":" + userType + ":" + openID
-	if userType == "group" && groupOpenID != "" {
-		return base + ":" + groupOpenID
-	}
-	return base
-}
-
-func (s *KnownUsersStore) load() {
-	if len(s.cache) > 0 {
-		return
-	}
-
-	data, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return
-	}
-
-	var users []KnownUser
-	if err := json.Unmarshal(data, &users); err != nil {
-		return
-	}
-
-	for i := range users {
-		u := &users[i]
-		key := makeUserKey(u.AccountID, u.Type, u.OpenID, u.GroupOpenID)
-		s.cache[key] = u
-	}
-}
-
-func (s *KnownUsersStore) scheduleSave() {
-	if s.saveTimer != nil {
-		return
-	}
-	s.saveTimer = time.AfterFunc(saveThrottleMs, func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.closed {
-			return
-		}
-		s.saveTimer = nil
-		s.doSave()
-	})
-}
-
-func (s *KnownUsersStore) doSave() {
-	if !s.dirty {
-		return
-	}
-	users := make([]KnownUser, 0, len(s.cache))
-	for _, u := range s.cache {
-		users = append(users, *u)
-	}
-	os.MkdirAll(s.dir, 0755)
-	data, _ := json.MarshalIndent(users, "", "  ")
-	os.WriteFile(s.filePath, data, 0644)
-	s.dirty = false
+// NewKnownUsersStore creates a new store backed by the shared DB.
+func NewKnownUsersStore(db *DB) *KnownUsersStore {
+	return &KnownUsersStore{db: db.SQLDB()}
 }
 
 // Record upserts a known user entry.
@@ -126,26 +54,19 @@ func (s *KnownUsersStore) Record(user KnownUser) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.load()
-	key := makeUserKey(user.AccountID, user.Type, user.OpenID, user.GroupOpenID)
 	now := time.Now().UnixMilli()
 
-	existing, ok := s.cache[key]
-	if ok {
-		existing.LastSeenAt = now
-		existing.InteractionCount++
-		if user.Nickname != "" && user.Nickname != existing.Nickname {
-			existing.Nickname = user.Nickname
-		}
-	} else {
-		user.FirstSeenAt = now
-		user.LastSeenAt = now
-		user.InteractionCount = 1
-		s.cache[key] = &user
+	_, err := s.db.Exec(`INSERT INTO known_users
+		(account_id, open_id, type, group_open_id, nickname, first_seen_at, last_seen_at, interaction_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+		ON CONFLICT(account_id, type, open_id, group_open_id) DO UPDATE SET
+			last_seen_at = excluded.last_seen_at,
+			interaction_count = interaction_count + 1,
+			nickname = CASE WHEN excluded.nickname != '' THEN excluded.nickname ELSE nickname END`,
+		user.AccountID, user.OpenID, user.Type, user.GroupOpenID, user.Nickname, now, now)
+	if err != nil {
+		fmt.Printf("[store] Record: %v\n", err)
 	}
-
-	s.dirty = true
-	s.scheduleSave()
 }
 
 // Get retrieves a single known user.
@@ -153,13 +74,17 @@ func (s *KnownUsersStore) Get(accountID, openID, userType, groupOpenID string) *
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.load()
-	key := makeUserKey(accountID, userType, openID, groupOpenID)
-	u, ok := s.cache[key]
-	if !ok {
+	row := s.db.QueryRow(`SELECT account_id, open_id, type, group_open_id, nickname,
+		first_seen_at, last_seen_at, interaction_count
+		FROM known_users WHERE account_id = ? AND type = ? AND open_id = ? AND group_open_id = ?`,
+		accountID, userType, openID, groupOpenID)
+
+	var u KnownUser
+	if err := row.Scan(&u.AccountID, &u.OpenID, &u.Type, &u.GroupOpenID, &u.Nickname,
+		&u.FirstSeenAt, &u.LastSeenAt, &u.InteractionCount); err != nil {
 		return nil
 	}
-	return u
+	return &u
 }
 
 // List returns known users matching the given options.
@@ -167,96 +92,125 @@ func (s *KnownUsersStore) List(opts ListOptions) []KnownUser {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.load()
-	users := make([]KnownUser, 0, len(s.cache))
-	for _, u := range s.cache {
-		users = append(users, *u)
-	}
+	query := `SELECT account_id, open_id, type, group_open_id, nickname,
+		first_seen_at, last_seen_at, interaction_count FROM known_users`
+	var args []interface{}
+	var where string
 
 	if opts.AccountID != "" {
-		filtered := users[:0]
-		for _, u := range users {
-			if u.AccountID == opts.AccountID {
-				filtered = append(filtered, u)
-			}
-		}
-		users = filtered
+		where += " WHERE account_id = ?"
+		args = append(args, opts.AccountID)
 	}
 	if opts.Type != "" {
-		filtered := users[:0]
-		for _, u := range users {
-			if u.Type == opts.Type {
-				filtered = append(filtered, u)
-			}
+		if where != "" {
+			where += " AND type = ?"
+		} else {
+			where += " WHERE type = ?"
 		}
-		users = filtered
+		args = append(args, opts.Type)
 	}
 	if opts.ActiveWithin > 0 {
 		cutoff := time.Now().UnixMilli() - opts.ActiveWithin
-		filtered := users[:0]
-		for _, u := range users {
-			if u.LastSeenAt >= cutoff {
-				filtered = append(filtered, u)
-			}
+		if where != "" {
+			where += " AND last_seen_at >= ?"
+		} else {
+			where += " WHERE last_seen_at >= ?"
 		}
-		users = filtered
+		args = append(args, cutoff)
 	}
 
+	query += where
+
+	// Sorting.
 	sortBy := opts.SortBy
 	if sortBy == "" {
 		sortBy = "lastSeenAt"
 	}
+	var col string
+	switch sortBy {
+	case "firstSeenAt":
+		col = "first_seen_at"
+	case "interactionCount":
+		col = "interaction_count"
+	default:
+		col = "last_seen_at"
+	}
+
 	sortOrder := opts.SortOrder
 	if sortOrder == "" {
 		sortOrder = "desc"
 	}
-
-	sort.Slice(users, func(i, j int) bool {
-		var aVal, bVal int64
-		switch sortBy {
-		case "firstSeenAt":
-			aVal, bVal = users[i].FirstSeenAt, users[j].FirstSeenAt
-		case "interactionCount":
-			aVal, bVal = int64(users[i].InteractionCount), int64(users[j].InteractionCount)
-		default:
-			aVal, bVal = users[i].LastSeenAt, users[j].LastSeenAt
-		}
-		if sortOrder == "asc" {
-			return aVal < bVal
-		}
-		return aVal > bVal
-	})
-
-	if opts.Limit > 0 && len(users) > opts.Limit {
-		users = users[:opts.Limit]
+	query += " ORDER BY " + col
+	if sortOrder == "asc" {
+		query += " ASC"
+	} else {
+		query += " DESC"
 	}
 
+	if opts.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, opts.Limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		fmt.Printf("[store] List: %v\n", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var users []KnownUser
+	for rows.Next() {
+		var u KnownUser
+		if err := rows.Scan(&u.AccountID, &u.OpenID, &u.Type, &u.GroupOpenID, &u.Nickname,
+			&u.FirstSeenAt, &u.LastSeenAt, &u.InteractionCount); err != nil {
+			continue
+		}
+		users = append(users, u)
+	}
+
+	if users == nil {
+		return []KnownUser{}
+	}
 	return users
 }
 
 // Stats returns user statistics.
 func (s *KnownUsersStore) Stats(accountID string) UserStats {
-	users := s.List(ListOptions{AccountID: accountID})
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	now := time.Now().UnixMilli()
 	day := int64(24 * 60 * 60 * 1000)
 
-	stats := UserStats{TotalUsers: len(users)}
-	for _, u := range users {
-		switch u.Type {
-		case "c2c":
-			stats.C2CUsers++
-		case "group":
-			stats.GroupUsers++
-		}
-		if now-u.LastSeenAt < day {
-			stats.ActiveIn24h++
-		}
-		if now-u.LastSeenAt < 7*day {
-			stats.ActiveIn7d++
-		}
+	var total, c2c, grp, active24h, active7d int
+	query := `SELECT
+		COUNT(*),
+		SUM(CASE WHEN type = 'c2c' THEN 1 ELSE 0 END),
+		SUM(CASE WHEN type = 'group' THEN 1 ELSE 0 END),
+		SUM(CASE WHEN last_seen_at >= ? THEN 1 ELSE 0 END),
+		SUM(CASE WHEN last_seen_at >= ? THEN 1 ELSE 0 END)
+		FROM known_users`
+	var args []interface{}
+	args = append(args, now-day, now-7*day)
+
+	if accountID != "" {
+		query += " WHERE account_id = ?"
+		args = append(args, accountID)
 	}
-	return stats
+
+	row := s.db.QueryRow(query, args...)
+	if err := row.Scan(&total, &c2c, &grp, &active24h, &active7d); err != nil {
+		return UserStats{}
+	}
+
+	return UserStats{
+		TotalUsers:  total,
+		C2CUsers:    c2c,
+		GroupUsers:  grp,
+		ActiveIn24h: active24h,
+		ActiveIn7d:  active7d,
+	}
 }
 
 // Remove deletes a known user. Returns true if the user was found.
@@ -264,89 +218,87 @@ func (s *KnownUsersStore) Remove(accountID, openID, userType, groupOpenID string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.load()
-	key := makeUserKey(accountID, userType, openID, groupOpenID)
-	if _, ok := s.cache[key]; !ok {
+	res, err := s.db.Exec(`DELETE FROM known_users
+		WHERE account_id = ? AND type = ? AND open_id = ? AND group_open_id = ?`,
+		accountID, userType, openID, groupOpenID)
+	if err != nil {
 		return false
 	}
-	delete(s.cache, key)
-	s.dirty = true
-	s.scheduleSave()
-	return true
+	n, _ := res.RowsAffected()
+	return n > 0
 }
 
-// Clear removes users. If accountID is empty, clears all.
+// Clear removes users. If accountID is empty, clears all. Returns count of removed users.
 func (s *KnownUsersStore) Clear(accountID string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.load()
-	count := 0
-
+	var res sql.Result
+	var err error
 	if accountID != "" {
-		for key, u := range s.cache {
-			if u.AccountID == accountID {
-				delete(s.cache, key)
-				count++
-			}
-		}
+		res, err = s.db.Exec(`DELETE FROM known_users WHERE account_id = ?`, accountID)
 	} else {
-		count = len(s.cache)
-		s.cache = make(map[string]*KnownUser)
+		res, err = s.db.Exec(`DELETE FROM known_users`)
 	}
-
-	if count > 0 {
-		s.dirty = true
-		s.doSave()
+	if err != nil {
+		return 0
 	}
-	return count
+	n, _ := res.RowsAffected()
+	return int(n)
 }
 
-// Close stops timers and flushes to disk.
-func (s *KnownUsersStore) Close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Flush is a no-op for SQLite backend; data is written immediately.
+func (s *KnownUsersStore) Flush() {}
 
-	if s.saveTimer != nil {
-		s.saveTimer.Stop()
-		s.saveTimer = nil
-	}
-	s.doSave()
-	s.closed = true
-}
-
-// Flush forces an immediate write to disk.
-func (s *KnownUsersStore) Flush() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.saveTimer != nil {
-		s.saveTimer.Stop()
-		s.saveTimer = nil
-	}
-	s.doSave()
-}
+// Close is a no-op for SQLite backend; the DB connection is managed by DB.Close().
+func (s *KnownUsersStore) Close() {}
 
 // GetUserGroups returns group openids for a user.
 func (s *KnownUsersStore) GetUserGroups(accountID, openID string) []string {
-	users := s.List(ListOptions{AccountID: accountID, Type: "group"})
-	groups := make([]string, 0)
-	for _, u := range users {
-		if u.OpenID == openID && u.GroupOpenID != "" {
-			groups = append(groups, u.GroupOpenID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.Query(`SELECT DISTINCT group_open_id FROM known_users
+		WHERE account_id = ? AND open_id = ? AND type = 'group' AND group_open_id != ''`,
+		accountID, openID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var groups []string
+	for rows.Next() {
+		var g string
+		if err := rows.Scan(&g); err != nil {
+			continue
 		}
+		groups = append(groups, g)
 	}
 	return groups
 }
 
 // GetGroupMembers returns all known users in a group.
 func (s *KnownUsersStore) GetGroupMembers(accountID, groupOpenID string) []KnownUser {
-	users := s.List(ListOptions{AccountID: accountID, Type: "group"})
-	members := make([]KnownUser, 0)
-	for _, u := range users {
-		if u.GroupOpenID == groupOpenID {
-			members = append(members, u)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.Query(`SELECT account_id, open_id, type, group_open_id, nickname,
+		first_seen_at, last_seen_at, interaction_count
+		FROM known_users WHERE account_id = ? AND type = 'group' AND group_open_id = ?`,
+		accountID, groupOpenID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var members []KnownUser
+	for rows.Next() {
+		var u KnownUser
+		if err := rows.Scan(&u.AccountID, &u.OpenID, &u.Type, &u.GroupOpenID, &u.Nickname,
+			&u.FirstSeenAt, &u.LastSeenAt, &u.InteractionCount); err != nil {
+			continue
 		}
+		members = append(members, u)
 	}
 	return members
 }
