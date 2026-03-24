@@ -9,6 +9,10 @@
 - [发送私聊消息](#发送私聊消息)
 - [发送群聊消息](#发送群聊消息)
 - [Markdown 消息格式](#markdown-消息格式)
+- [发送图片消息](#发送图片消息)
+- [发送其他媒体文件](#发送其他媒体文件)
+- [回复消息](#回复消息)
+- [完整示例脚本](#完整示例脚本)
 - [常见错误](#常见错误)
 
 ---
@@ -180,6 +184,166 @@ curl -X POST "https://api.sgroup.qq.com/v2/users/USER_OPENID/messages" \
   },
   "msg_type": 2
 }
+```
+
+---
+
+## 发送图片消息
+
+发送图片需要先上传图片获取 `file_info`，然后发送消息。也可以使用 `srv_send_msg` 参数一步完成上传和发送。
+
+### API 端点
+
+```
+POST https://api.sgroup.qq.com/v2/users/{openid}/files
+POST https://api.sgroup.qq.com/v2/groups/{group_openid}/files
+```
+
+### 方式一：一步发送（推荐）
+
+使用 `srv_send_msg: true` 参数，上传后自动发送：
+
+```bash
+curl -X POST "https://api.sgroup.qq.com/v2/users/USER_OPENID/files" \
+  -H "Authorization: QQBot YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_type": 1,
+    "srv_send_msg": true,
+    "url": "https://example.com/image.png"
+  }'
+```
+
+### 方式二：分步发送
+
+**步骤 1：上传图片获取 file_info**
+
+```bash
+curl -X POST "https://api.sgroup.qq.com/v2/users/USER_OPENID/files" \
+  -H "Authorization: QQBot YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_type": 1,
+    "srv_send_msg": false,
+    "url": "https://example.com/image.png"
+  }'
+```
+
+**响应：**
+
+```json
+{
+  "file_uuid": "xxxxxxxx",
+  "file_info": "8Xr4A6jfKuZY4lCRUthGTb...",
+  "ttl": 86400
+}
+```
+
+**步骤 2：发送图片消息**
+
+```bash
+curl -X POST "https://api.sgroup.qq.com/v2/users/USER_OPENID/messages" \
+  -H "Authorization: QQBot YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "msg_type": 7,
+    "media": {
+      "file_info": "YOUR_FILE_INFO"
+    },
+    "content": "这是一张图片"
+  }'
+```
+
+### 参数说明
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| file_type | int | 是 | 文件类型：1=图片，2=语音，3=视频，4=文件 |
+| srv_send_msg | bool | 否 | 是否上传后自动发送，默认 false |
+| url | string | 是* | 图片 URL 地址 |
+| file_data | string | 是* | 图片 Base64 编码（与 url 二选一） |
+
+> 注意：`url` 和 `file_data` 必须提供其中一个。
+
+### 发送 Base64 图片
+
+```bash
+curl -X POST "https://api.sgroup.qq.com/v2/users/USER_OPENID/files" \
+  -H "Authorization: QQBot YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_type": 1,
+    "srv_send_msg": true,
+    "file_data": "iVBORw0KGgoAAAANSUhEUgAA..."
+  }'
+```
+
+### 发送群聊图片
+
+```bash
+curl -X POST "https://api.sgroup.qq.com/v2/groups/GROUP_OPENID/files" \
+  -H "Authorization: QQBot YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_type": 1,
+    "srv_send_msg": true,
+    "url": "https://example.com/image.png"
+  }'
+```
+
+---
+
+## 发送其他媒体文件
+
+除了图片，还可以发送语音、视频和文件。
+
+### 文件类型对照表
+
+| file_type | 类型 | 支持格式 |
+|-----------|------|----------|
+| 1 | 图片 | png, jpg, gif, bmp |
+| 2 | 语音 | silk, mp3, wav, amr |
+| 3 | 视频 | mp4, mov |
+| 4 | 文件 | 任意格式 |
+
+### 发送语音消息
+
+```bash
+curl -X POST "https://api.sgroup.qq.com/v2/users/USER_OPENID/files" \
+  -H "Authorization: QQBot YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_type": 2,
+    "srv_send_msg": true,
+    "file_data": "BASE64_ENCODED_AUDIO"
+  }'
+```
+
+### 发送视频消息
+
+```bash
+curl -X POST "https://api.sgroup.qq.com/v2/users/USER_OPENID/files" \
+  -H "Authorization: QQBot YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_type": 3,
+    "srv_send_msg": true,
+    "url": "https://example.com/video.mp4"
+  }'
+```
+
+### 发送文件
+
+```bash
+curl -X POST "https://api.sgroup.qq.com/v2/users/USER_OPENID/files" \
+  -H "Authorization: QQBot YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_type": 4,
+    "srv_send_msg": true,
+    "url": "https://example.com/document.pdf",
+    "file_name": "文档.pdf"
+  }'
 ```
 
 ---
