@@ -14,6 +14,7 @@ const DefaultAccountID = "default"
 type QQBotChannelConfig struct {
 	types.QQBotAccountConfig          `yaml:",inline"`
 	Accounts                 map[string]*types.QQBotAccountConfig `yaml:"accounts,omitempty"`
+	DefaultWebhookURL        *string                            `yaml:"defaultWebhookUrl,omitempty"`
 }
 
 // QQBotConfig is the top-level configuration loaded from YAML.
@@ -121,6 +122,16 @@ func ResolveAccount(cfg *QQBotConfig, accountID string) types.ResolvedQQBotAccou
 		markdownSupport = *accountConfig.MarkdownSupport
 	}
 
+	// WebhookURL: per-account webhookUrl > defaultWebhookUrl > empty
+	webhookURL := accountConfig.WebhookURL
+	if (webhookURL == nil || *webhookURL == "") && cfg != nil && cfg.QQBot != nil && cfg.QQBot.DefaultWebhookURL != nil {
+		webhookURL = cfg.QQBot.DefaultWebhookURL
+	}
+	resolvedWebhookURL := ""
+	if webhookURL != nil {
+		resolvedWebhookURL = *webhookURL
+	}
+
 	return types.ResolvedQQBotAccount{
 		AccountID:         accountID,
 		Name:              accountConfig.Name,
@@ -131,6 +142,7 @@ func ResolveAccount(cfg *QQBotConfig, accountID string) types.ResolvedQQBotAccou
 		SystemPrompt:      accountConfig.SystemPrompt,
 		ImageServerBaseUrl: imageServerBaseUrl,
 		MarkdownSupport:   markdownSupport,
+		WebhookURL:        resolvedWebhookURL,
 		Config:            &accountConfig,
 	}
 }

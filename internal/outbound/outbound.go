@@ -46,6 +46,11 @@ func NewOutboundHandler(sender MessageSender, imageServerURL string) *OutboundHa
 	}
 }
 
+// GetImageServerURL returns the configured image server base URL.
+func (h *OutboundHandler) GetImageServerURL() string {
+	return h.imageServer
+}
+
 // SendText sends a text message, parsing any embedded media tags.
 func (h *OutboundHandler) SendText(ctx context.Context, target Target, text, msgID string) error {
 	effectiveMsgID := msgID

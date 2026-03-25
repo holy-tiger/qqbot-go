@@ -123,6 +123,18 @@ func initSchema(db *sql.DB) error {
 		app_id             TEXT    NOT NULL DEFAULT '',
 		saved_at           INTEGER NOT NULL DEFAULT 0
 	);
+
+	CREATE TABLE IF NOT EXISTS reminders (
+		id              TEXT PRIMARY KEY,
+		account_id      TEXT    NOT NULL DEFAULT '',
+		content         TEXT    NOT NULL DEFAULT '',
+		target_type     TEXT    NOT NULL DEFAULT '',
+		target_address  TEXT    NOT NULL DEFAULT '',
+		schedule        TEXT    NOT NULL DEFAULT '',
+		next_run        INTEGER NOT NULL DEFAULT 0,
+		created_at      INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_rem_account ON reminders(account_id);
 	`
 	_, err := db.Exec(schema)
 	return err

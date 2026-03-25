@@ -29,7 +29,17 @@ type Scheduler struct {
 	mu      sync.Mutex
 	jobs    map[string]*ReminderJob
 	manager *ProactiveManager
+	store   ReminderPersister
 	cancel  context.CancelFunc
+}
+
+// ReminderPersister defines the interface for persisting reminders.
+type ReminderPersister interface {
+	Save(job ReminderJob)
+	Get(id string) *ReminderJob
+	Delete(id string) bool
+	ListByAccount(accountID string) []ReminderJob
+	ListAll() []ReminderJob
 }
 
 // NewScheduler creates a new Scheduler.
@@ -40,7 +50,7 @@ func NewScheduler(manager *ProactiveManager) *Scheduler {
 	}
 }
 
-// Start begins checking for due jobs.
+// Start begins checking for due jobs. Loads persisted reminders on first start.
 func (s *Scheduler) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
@@ -48,6 +58,14 @@ func (s *Scheduler) Start(ctx context.Context) {
 		s.cancel()
 	}
 	s.cancel = cancel
+
+	// Load persisted jobs on first start
+	if s.store != nil && len(s.jobs) == 0 {
+		for _, job := range s.store.ListAll() {
+			j := job
+			s.jobs[j.ID] = &j
+		}
+	}
 	s.mu.Unlock()
 
 	go s.run(ctx)
@@ -71,7 +89,17 @@ func (s *Scheduler) AddReminder(job ReminderJob) string {
 		job.ID = fmt.Sprintf("rem-%d", time.Now().UnixNano())
 	}
 	s.jobs[job.ID] = &job
+	if s.store != nil {
+		s.store.Save(job)
+	}
 	return job.ID
+}
+
+// SetStore sets the persistence backend for reminders.
+func (s *Scheduler) SetStore(store ReminderPersister) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.store = store
 }
 
 // CancelReminder removes a job by ID. Returns true if found.
@@ -82,6 +110,9 @@ func (s *Scheduler) CancelReminder(jobID string) bool {
 		return false
 	}
 	delete(s.jobs, jobID)
+	if s.store != nil {
+		s.store.Delete(jobID)
+	}
 	return true
 }
 
@@ -128,7 +159,7 @@ func (s *Scheduler) checkDue(ctx context.Context) {
 		s.executeJob(ctx, j)
 		s.mu.Lock()
 		if job, ok := s.jobs[j.ID]; ok {
-			next := calculateNextRun(job.Schedule, now)
+			next := CalculateNextRun(job.Schedule, now)
 			if next.IsZero() {
 				// Non-recurring: remove the job
 				delete(s.jobs, j.ID)
@@ -156,9 +187,9 @@ func (s *Scheduler) executeJob(ctx context.Context, j *ReminderJob) {
 	}
 }
 
-// calculateNextRun computes the next run time based on the schedule string.
+// CalculateNextRun computes the next run time based on the schedule string.
 // Supports "@every Xs", "@every Xm", "@every Xh" and simple "0 * * * * *" (6-field cron).
-func calculateNextRun(schedule string, after time.Time) time.Time {
+func CalculateNextRun(schedule string, after time.Time) time.Time {
 	schedule = strings.TrimSpace(schedule)
 	if schedule == "" {
 		return time.Time{} // no recurrence
@@ -172,9 +203,8 @@ func calculateNextRun(schedule string, after time.Time) time.Time {
 		return after.Add(dur)
 	}
 
-	// For raw cron expressions, treat as recurring every minute for now.
-	// A full cron parser could be added later.
-	return after.Add(1 * time.Minute)
+	// For raw cron expressions, use the cron parser.
+	return parseCronExpression(schedule, after)
 }
 
 func parseDuration(s string) (time.Duration, error) {

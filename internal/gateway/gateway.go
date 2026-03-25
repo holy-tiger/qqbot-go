@@ -17,6 +17,22 @@ import (
 // EventHandler is called when a message event is received from the gateway.
 type EventHandler func(accountID string, eventType string, payload []byte)
 
+// SessionPersister defines the interface for persisting WebSocket session state.
+type SessionPersister interface {
+	Load(accountID, expectedAppID string) *SessionData
+	Save(data SessionData)
+	UpdateLastSeq(accountID string, lastSeq int)
+}
+
+// SessionData represents a persistent WebSocket session state.
+type SessionData struct {
+	SessionID        string
+	LastSeq          int
+	IntentLevelIndex int
+	AccountID        string
+	AppID            string
+}
+
 // Gateway manages the WebSocket connection to the QQ Bot gateway.
 type Gateway struct {
 	accountID    string
@@ -34,6 +50,8 @@ type Gateway struct {
 	connected    bool
 	muConn       sync.Mutex
 	cancel       context.CancelFunc
+	sessionStore SessionPersister
+	appID        string
 
 	// Heartbeat
 	heartbeatTimer *time.Timer
@@ -58,6 +76,17 @@ func NewGateway(accountID string, client *api.APIClient, handler EventHandler) *
 	}
 }
 
+// SetSessionStore configures session persistence for the gateway.
+func (g *Gateway) SetSessionStore(store SessionPersister, appID string) {
+	g.sessionStore = store
+	g.appID = appID
+}
+
+// HasSessionStore returns whether a session store is configured.
+func (g *Gateway) HasSessionStore() bool {
+	return g.sessionStore != nil
+}
+
 // Connect establishes the WebSocket connection with intent fallback and reconnection.
 // It blocks until READY is received (or context cancelled), then returns nil.
 // The read loop continues running in the background.
@@ -69,6 +98,19 @@ func (g *Gateway) Connect(ctx context.Context) error {
 	g.mu.Lock()
 	g.readyCh = make(chan struct{})
 	g.mu.Unlock()
+
+	// Load persisted session state
+	if g.sessionStore != nil {
+		state := g.sessionStore.Load(g.accountID, g.appID)
+		if state != nil {
+			g.muConn.Lock()
+			g.sessionID = state.SessionID
+			g.lastSeq = state.LastSeq
+			g.intentIndex = state.IntentLevelIndex
+			g.muConn.Unlock()
+			log.Printf("[gateway:%s] restored session (seq=%d, intent=%d)", g.accountID, g.lastSeq, g.intentIndex)
+		}
+	}
 
 	go g.connectLoop(ctx)
 
@@ -252,6 +294,11 @@ func (g *Gateway) readLoop(ctx context.Context) error {
 		}
 
 		g.handlePayload(ctx, &payload)
+
+		// Persist seq periodically (every message is cheap for SQLite)
+		if g.sessionStore != nil {
+			g.sessionStore.UpdateLastSeq(g.accountID, g.lastSeq)
+		}
 	}
 }
 
@@ -314,6 +361,7 @@ func (g *Gateway) handleDispatch(payload *types.WSPayload) {
 			g.connected = true
 			g.muConn.Unlock()
 		}
+		g.saveSession()
 		g.signalReady()
 
 	case EventResumed:
@@ -470,4 +518,21 @@ func (g *Gateway) getGatewayURLAndToken(ctx context.Context) (wsURL, token strin
 // GetAccessToken exposes the token getter for the gateway.
 func (g *Gateway) GetAccessToken(ctx context.Context) (string, error) {
 	return g.client.GetAccessToken(ctx)
+}
+
+// saveSession persists current session state if a store is configured.
+func (g *Gateway) saveSession() {
+	if g.sessionStore == nil {
+		return
+	}
+	g.muConn.Lock()
+	data := SessionData{
+		SessionID:        g.sessionID,
+		LastSeq:          g.lastSeq,
+		IntentLevelIndex: g.intentIndex,
+		AccountID:        g.accountID,
+		AppID:            g.appID,
+	}
+	g.muConn.Unlock()
+	g.sessionStore.Save(data)
 }

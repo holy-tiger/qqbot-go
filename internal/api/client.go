@@ -54,6 +54,11 @@ func WithMarkdownSupport(v bool) ClientOption {
 	}
 }
 
+// GetMarkdownSupport returns whether markdown message format is enabled.
+func (c *APIClient) GetMarkdownSupport() bool {
+	return c.markdownSupport
+}
+
 // WithMessageSentHook sets a callback invoked when a message is sent with a ref_idx.
 func WithMessageSentHook(fn func(string, types.OutboundMeta)) ClientOption {
 	return func(c *APIClient) {

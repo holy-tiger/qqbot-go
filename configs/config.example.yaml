@@ -19,6 +19,10 @@ qqbot:
   # AI 系统提示词
   systemPrompt: "You are a helpful assistant."
 
+  # Webhook 回调地址（收到用户消息时通过 HTTP POST 推送）
+  # 每个账号可单独设置 webhookUrl 覆盖此全局配置
+  defaultWebhookUrl: "http://your-service:3000/webhook"
+
   # 图床服务地址（用于本地图片转 URL 发送）
   imageServerBaseUrl: "http://your-ip:18765"
 
@@ -50,6 +54,8 @@ qqbot:
       enabled: true
       name: "Second Bot"
       systemPrompt: "You are another helpful assistant."
+      # 可选: 为该账号单独设置 Webhook 地址（覆盖 defaultWebhookUrl）
+      # webhookUrl: "http://your-service:3000/webhook/second-bot"
 
     # 禁用某个账号:
     # disabled-bot:

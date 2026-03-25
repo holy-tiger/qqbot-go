@@ -155,6 +155,7 @@ type QQBotAccountConfig struct {
 	MarkdownSupport      *bool               `json:"markdownSupport,omitempty" yaml:"markdownSupport,omitempty"`
 	VoiceDirectUploadFormats []string        `json:"voiceDirectUploadFormats,omitempty" yaml:"voiceDirectUploadFormats,omitempty"`
 	AudioFormatPolicy    *AudioFormatPolicy  `json:"audioFormatPolicy,omitempty" yaml:"audioFormatPolicy,omitempty"`
+	WebhookURL           *string             `json:"webhookUrl,omitempty" yaml:"webhookUrl,omitempty"`
 }
 
 // ResolvedQQBotAccount is a fully resolved account with all defaults applied.
@@ -168,6 +169,7 @@ type ResolvedQQBotAccount struct {
 	SystemPrompt      *string             `json:"systemPrompt,omitempty"`
 	ImageServerBaseUrl *string            `json:"imageServerBaseUrl,omitempty"`
 	MarkdownSupport   bool                `json:"markdownSupport"`
+	WebhookURL        string              `json:"webhookUrl,omitempty"`
 	Config            *QQBotAccountConfig `json:"config,omitempty"`
 }
 
