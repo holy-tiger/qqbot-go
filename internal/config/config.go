@@ -142,9 +142,17 @@ func ResolveAccount(cfg *QQBotConfig, accountID string) types.ResolvedQQBotAccou
 		SystemPrompt:      accountConfig.SystemPrompt,
 		ImageServerBaseUrl: imageServerBaseUrl,
 		MarkdownSupport:   markdownSupport,
+		TTSVoice:          derefString(accountConfig.TTSVoice),
 		WebhookURL:        resolvedWebhookURL,
 		Config:            &accountConfig,
 	}
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func normalizeAppID(v *string) string {

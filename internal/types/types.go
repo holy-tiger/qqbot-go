@@ -155,6 +155,7 @@ type QQBotAccountConfig struct {
 	MarkdownSupport      *bool               `json:"markdownSupport,omitempty" yaml:"markdownSupport,omitempty"`
 	VoiceDirectUploadFormats []string        `json:"voiceDirectUploadFormats,omitempty" yaml:"voiceDirectUploadFormats,omitempty"`
 	AudioFormatPolicy    *AudioFormatPolicy  `json:"audioFormatPolicy,omitempty" yaml:"audioFormatPolicy,omitempty"`
+	TTSVoice             *string             `json:"ttsVoice,omitempty" yaml:"ttsVoice,omitempty"`
 	WebhookURL           *string             `json:"webhookUrl,omitempty" yaml:"webhookUrl,omitempty"`
 }
 
@@ -169,6 +170,7 @@ type ResolvedQQBotAccount struct {
 	SystemPrompt      *string             `json:"systemPrompt,omitempty"`
 	ImageServerBaseUrl *string            `json:"imageServerBaseUrl,omitempty"`
 	MarkdownSupport   bool                `json:"markdownSupport"`
+	TTSVoice          string              `json:"ttsVoice,omitempty"`
 	WebhookURL        string              `json:"webhookUrl,omitempty"`
 	Config            *QQBotAccountConfig `json:"config,omitempty"`
 }

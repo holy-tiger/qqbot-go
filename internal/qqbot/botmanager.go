@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/openclaw/qqbot/internal/api"
+	"github.com/openclaw/qqbot/internal/audio"
 	"github.com/openclaw/qqbot/internal/gateway"
 	"github.com/openclaw/qqbot/internal/outbound"
 	"github.com/openclaw/qqbot/internal/proactive"
@@ -32,6 +33,7 @@ type Account struct {
 	KnownUsers *store.KnownUsersStore
 	RefIndex   *store.RefIndexStore
 	Sessions   *store.SessionStore
+	TTS        *audio.TTSProvider
 	DataDir    string
 
 	eventHandler gateway.EventHandler
@@ -116,6 +118,10 @@ func (m *BotManager) AddAccount(account types.ResolvedQQBotAccount) error {
 	scheduler := proactive.NewScheduler(proMgr)
 	scheduler.SetStore(newReminderStoreAdapter(reminderStore))
 
+	ttsProvider := audio.NewTTSProvider(audio.TTSConfig{
+		Voice: account.TTSVoice,
+	})
+
 	acct := &Account{
 		ID:           account.AccountID,
 		Config:       account,
@@ -127,6 +133,7 @@ func (m *BotManager) AddAccount(account types.ResolvedQQBotAccount) error {
 		KnownUsers:   userStore,
 		RefIndex:     refStore,
 		Sessions:     sessionStore,
+		TTS:          ttsProvider,
 		DataDir:      m.dataDir,
 		eventHandler: eventHandler,
 	}
@@ -348,11 +355,22 @@ func (m *BotManager) SendImage(ctx context.Context, accountID, targetType, targe
 }
 
 // SendVoice sends a voice message to a target.
+// If voiceBase64 is empty but ttsText is provided, uses TTS to generate audio.
 func (m *BotManager) SendVoice(ctx context.Context, accountID, targetType, targetID, voiceBase64, ttsText, msgID string) error {
 	acct, err := m.lookupAccount(accountID)
 	if err != nil {
 		return err
 	}
+
+	// TTS fallback: generate audio from text if no voice data provided
+	if voiceBase64 == "" && ttsText != "" {
+		generated, err := acct.TTS.SynthesizeToSilkBase64(ttsText)
+		if err != nil {
+			return fmt.Errorf("TTS synthesis failed: %w", err)
+		}
+		voiceBase64 = generated
+	}
+
 	return acct.Outbound.SendVoice(ctx, outbound.Target{Type: targetType, OpenID: targetID}, voiceBase64, ttsText, msgID)
 }
 
