@@ -56,7 +56,7 @@ npm-debug.log*
 .cloudstudio-backup/
 
 # CodeBuddy internal
-.codebuddy/
+#.codebuddy/
 
 # Go build output
 bin/
