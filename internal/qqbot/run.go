@@ -123,7 +123,7 @@ func (a *botAPIAdapter) GetReminders(accountID string) []proactive.ReminderJob {
 
 // Run starts the BotManager with graceful shutdown handling.
 // It blocks until SIGINT/SIGTERM is received or the context is cancelled.
-func Run(ctx context.Context, cfgPath string, healthAddr string, apiAddr string) error {
+func Run(ctx context.Context, cfgPath string, healthAddr string, apiAddr string, version string) error {
 	cfg, err := loadAndValidateConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -191,7 +191,7 @@ func Run(ctx context.Context, cfgPath string, healthAddr string, apiAddr string)
 	// Health server
 	var healthServer *HealthServer
 	if healthAddr != "" {
-		healthServer = NewHealthServer(mgr, "0.1.0")
+		healthServer = NewHealthServer(mgr, version)
 		if err := healthServer.Start(healthAddr); err != nil {
 			log.Printf("[qqbot] WARNING: health server failed to start: %v", err)
 		} else {

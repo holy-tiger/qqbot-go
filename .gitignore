@@ -62,7 +62,7 @@ npm-debug.log*
 # Go build output
 bin/
 *.exe
-qqbot
+/qqbot
 
 # Go test / coverage
 *.test
