@@ -21,9 +21,9 @@ go vet ./...
 
 | Doc | Description |
 |-----|-------------|
-| [docs/api.md](docs/api.md) | HTTP API endpoints, response format, webhook forwarding |
-| [docs/architecture.md](docs/architecture.md) | Architecture patterns, concurrency, dependencies |
-| [docs/configuration.md](docs/configuration.md) | CLI flags, config file options, webhook config |
+| [docs/en/api.md](docs/en/api.md) | HTTP API endpoints, response format, webhook forwarding |
+| [docs/en/architecture.md](docs/en/architecture.md) | Architecture patterns, concurrency, dependencies |
+| [docs/en/configuration.md](docs/en/configuration.md) | CLI flags, config file options, webhook config |
 
 ## Project Structure
 
