@@ -223,8 +223,8 @@ Send a voice message to a C2C user.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `voice_base64` | string | Yes | Base64-encoded voice data (SILK format). |
-| `tts_text` | string | No | Text for TTS (text-to-speech) synthesis. When provided, the system synthesizes speech from this text instead of using `voice_base64`. |
+| `voice_base64` | string | Yes* | Base64-encoded voice data (SILK format). Required unless `tts_text` is provided. |
+| `tts_text` | string | No | Text for TTS (text-to-speech) synthesis via edge-tts. When provided, the system synthesizes speech from this text instead of using `voice_base64`. |
 | `msg_id` | string | No | Original message ID for passive reply. |
 
 **Response:**

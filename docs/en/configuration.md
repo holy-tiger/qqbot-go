@@ -208,19 +208,34 @@ All message events are forwarded with the following JSON structure:
 
 ## Channel Server (MCP)
 
-The Channel Server (`cmd/qqbot-channel`) is a separate binary that bridges QQ Bot events to CodeBuddy Code via the MCP (Model Context Protocol) stdio transport. It runs as an MCP server configured in `.mcp.json`.
+The Channel Server bridges QQ Bot events to CodeBuddy Code via the MCP (Model Context Protocol) stdio transport. It runs as an MCP server configured in `.mcp.json` and supports two deployment modes:
 
-### CLI Flags
+### Deployment Modes
+
+**1. Embedded Mode** (recommended)
+
+Runs as a subcommand of the main `qqbot` binary. Shares the same process and config.
+
+```json
+{
+  "mcpServers": {
+    "qq-channel": {
+      "command": "./qqbot",
+      "args": ["channel", "-config", "/path/to/config.yaml"]
+    }
+  }
+}
+```
+
+**2. Standalone Mode**
+
+Runs as a separate binary (`cmd/qqbot-channel`). Connects to qqbot via HTTP API.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-webhook-port` | `8788` | HTTP port for receiving webhook events from qqbot |
 | `-qqbot-api` | `http://127.0.0.1:9090` | qqbot HTTP API address (for sending replies) |
 | `-account` | `default` | Default QQ Bot account ID for reply routing |
-
-### Configuration
-
-The Channel Server is registered in `.mcp.json` at the project root:
 
 ```json
 {
@@ -268,7 +283,14 @@ The Channel Server declares the `claude/channel` experimental capability. This t
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `reply` | `chat_id` (required), `text` (required) | Send a text reply to a QQ conversation |
+| `reply` | `chat_id` (required), `text` (required), `media_type` (optional), `media_url` (optional) | Send a text or media reply to a QQ conversation |
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `chat_id` | Yes | Conversation ID (see format table below) |
+| `text` | Yes | Text content. For voice messages, this is used as TTS input text. |
+| `media_type` | No | Media type: `image`, `file`, `voice`, `video` |
+| `media_url` | No | Media file URL (required for image/file/video; optional for voice) |
 
 The `chat_id` format is determined by the conversation type:
 
@@ -287,6 +309,14 @@ The Channel Server sends notifications to the MCP client (CodeBuddy Code) when n
 - **Payload:** `{ "content": "...", "meta": { "source": "qq", "sender": "...", "chat_id": "..." } }`
 
 ### Setting Up
+
+**Embedded mode:**
+
+1. Build the main binary: `go build -o qqbot ./cmd/qqbot`
+2. Configure `.mcp.json` with the embedded subcommand (see above).
+3. The embedded mode reads the same config as the main qqbot process, including webhook and TTS settings.
+
+**Standalone mode:**
 
 1. Build the Channel Server binary: `go build -o qqbot-channel ./cmd/qqbot-channel`
 2. Configure qqbot webhook forwarding to point at the Channel Server's webhook port:

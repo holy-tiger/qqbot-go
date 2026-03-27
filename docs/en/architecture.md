@@ -29,7 +29,7 @@ openclaw-qqbot is a multi-account QQ Bot service built in Go. The architecture c
              │ webhook events
              ▼
       ┌──────────────┐       ┌─────────────────────┐
-      │   Webhook     │──────▶│  Channel Server      │ (separate binary)
+      │   Webhook     │──────▶│  Channel Server      │ (embedded or standalone)
       │  Dispatcher   │  HTTP │  (internal/channel/)  │
       └──────────────┘       └──────────┬──────────┘
                                          │ MCP stdio
@@ -88,20 +88,25 @@ httpapi.APIServer → BotAPI interface ← botAPIAdapter wraps *BotManager
 
 ### Channel Server (`internal/channel/`)
 
-A separate binary (`cmd/qqbot-channel`) that bridges QQ Bot events to CodeBuddy Code via the MCP (Model Context Protocol) stdio transport. It runs as two concurrent components:
+Bridges QQ Bot events to CodeBuddy Code via the MCP (Model Context Protocol) stdio transport. Supports two deployment modes:
+
+- **Embedded mode** — runs as a `qqbot channel` subcommand, sharing the same process and config
+- **Standalone mode** — runs as a separate binary (`cmd/qqbot-channel`)
+
+In both modes, the channel server runs as two concurrent components:
 
 1. **MCP stdio server** — communicates with CodeBuddy Code using JSON-RPC over stdin/stdout
 2. **HTTP webhook server** — receives forwarded QQ events from qqbot's webhook dispatcher
 
 **Key design decisions:**
-- Separate binary to avoid coupling the MCP server lifecycle with the main qqbot process
 - `claude/channel` experimental capability signals CodeBuddy Code that this is a messaging channel
-- `reply` MCP tool sends messages back to QQ via the qqbot HTTP API
+- `reply` MCP tool sends messages back to QQ via the qqbot HTTP API, supporting text, image, file, voice, and video
+- Voice messages use TTS (edge-tts) when no audio file is provided
 - Notifications flow server→client: webhook event → MCP notification → CodeBuddy Code processes → calls reply tool → HTTP API → QQ
 
 **Message routing:**
-- Currently uses a single `-account` flag for all replies
-- Future: route based on `account_id` from the webhook event payload
+- Embedded mode: uses the same BotManager and account config as the main process
+- Standalone mode: uses a single `-account` flag for all replies
 
 ---
 
@@ -463,8 +468,9 @@ The image dimension parser (`internal/image/size.go`) reads binary headers direc
 |------|---------|
 | `ffmpeg` | Audio processing (SILK encode/decode, format conversion) |
 | `ffprobe` | Audio format detection |
+| `edge-tts` | Text-to-speech synthesis (voice messages, `pip install edge-tts`) |
 
-No other external runtime dependencies. The binary is fully self-contained except for ffmpeg/ffprobe.
+No other external runtime dependencies. The binary is fully self-contained except for ffmpeg/ffprobe. The `edge-tts` CLI is optional — voice TTS features require it but the bot runs fine without it.
 
 ## Startup & Shutdown
 

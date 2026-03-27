@@ -6,7 +6,7 @@ QQ Bot HTTP API Service — a standalone Go service that exposes QQ Bot messagin
 
 - **Module:** `github.com/openclaw/qqbot`
 - **Go version:** 1.25 (CI also tests 1.24)
-- **Entry points:** `cmd/qqbot/main.go` (API server), `cmd/qqbot-channel/main.go` (MCP channel server)
+- **Entry points:** `cmd/qqbot/main.go` (API server + `channel` subcommand), `cmd/qqbot-channel/main.go` (standalone MCP channel server)
 
 ## Build & Run
 
@@ -42,7 +42,7 @@ cmd/
 configs/            YAML configuration (config.example.yaml)
 internal/
   api/              QQ Bot REST API client (token, media, messages)
-  audio/            Audio processing (SILK encode/decode, STT, format conversion)
+  audio/            Audio processing (SILK encode/decode, STT, TTS via edge-tts)
   channel/          MCP Channel Server (stdio MCP + webhook receiver)
   config/           Configuration loading and multi-account resolution
   gateway/          WebSocket gateway (heartbeat, reconnect, message queue)
@@ -81,6 +81,6 @@ GitHub Actions: `go vet` -> `go test -race` -> `go build` on Go 1.24 and 1.25, t
 - Health check endpoints: `/health` and `/healthz`
 - API server endpoints: `/api/v1/` (disabled when `-api` is empty)
 - No CGO required -- SILK encoding uses ffmpeg via `os/exec`
-- Channel server is a separate binary (`qqbot-channel`) that communicates via MCP stdio protocol
+- Channel server supports two modes: embedded (`qqbot channel` subcommand) and standalone (`qqbot-channel` binary)
 - Channel server receives QQ events via HTTP webhook and delivers them as MCP notifications
 - Channel server uses `claude/channel` experimental capability for CodeBuddy Code integration
