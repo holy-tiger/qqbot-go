@@ -75,7 +75,7 @@ internal/
 GitHub Actions: `go vet` -> `go test -race` -> `go build` on Go 1.24 and 1.25, triggered on push/PR to `main`/`master`.
 
 ## Important Notes
-
+- 执行前，先检查是否有合适的subagent可以完成任务，指派给subagent去执行。
 - Do NOT add code under `pkg/` -- all application code belongs in `internal/`
 - Data directory (`data/`) is created at runtime for persistent storage
 - Health check endpoints: `/health` and `/healthz`

@@ -142,9 +142,9 @@ func TestIntegration_ListTools(t *testing.T) {
 		t.Errorf("expected tool name %q, got %q", "reply", tool.Name)
 	}
 
-	// Verify tool schema has chat_id and text properties
-	if len(tool.InputSchema.Properties) != 2 {
-		t.Errorf("expected 2 properties, got %d", len(tool.InputSchema.Properties))
+	// Verify tool schema has chat_id, text, media_type, and media_url properties
+	if len(tool.InputSchema.Properties) != 4 {
+		t.Errorf("expected 4 properties, got %d", len(tool.InputSchema.Properties))
 	}
 	if _, ok := tool.InputSchema.Properties["chat_id"]; !ok {
 		t.Error("missing chat_id parameter")

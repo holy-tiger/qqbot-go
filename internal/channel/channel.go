@@ -81,14 +81,20 @@ func (cs *ChannelServer) registerReplyTool() {
 		return
 	}
 	tool := mcp.NewTool("reply",
-		mcp.WithDescription("回复 QQ 消息。通过 qqbot HTTP API 发送文本消息到指定的会话。"),
+		mcp.WithDescription("回复 QQ 消息。通过 qqbot HTTP API 发送文本或富媒体消息到指定的会话。不设置 media_type 则发送纯文本。"),
 		mcp.WithString("chat_id",
 			mcp.Required(),
 			mcp.Description("会话 ID，格式: c2c:user_openid (私聊) 或 group:group_openid (群聊) 或 channel:channel_id (频道) 或 dm:channel_id (频道私信)"),
 		),
 		mcp.WithString("text",
 			mcp.Required(),
-			mcp.Description("要发送的回复文本"),
+			mcp.Description("要发送的文本内容。纯文本消息时为消息正文；媒体消息时为图片说明/文件描述等"),
+		),
+		mcp.WithString("media_type",
+			mcp.Description("媒体类型，可选: image (图片), file (文件), voice (语音), video (视频)。不设置则发送纯文本"),
+		),
+		mcp.WithString("media_url",
+			mcp.Description("媒体文件的 URL。media_type 为 image/file/video 时必填"),
 		),
 	)
 	cs.mcp.AddTool(tool, cs.handleReply)
