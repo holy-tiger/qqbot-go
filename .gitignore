@@ -63,6 +63,7 @@ npm-debug.log*
 bin/
 *.exe
 /qqbot
+/qqbot-channel
 
 # Go test / coverage
 *.test

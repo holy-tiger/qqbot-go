@@ -2,7 +2,7 @@
 
 ## Overview
 
-openclaw-qqbot is a multi-account QQ Bot service built in Go. The architecture centers on **BotManager** as the top-level orchestrator, with each account getting fully isolated dependencies. The system exposes messaging capabilities via a RESTful HTTP API and receives messages through persistent WebSocket connections to the QQ Bot gateway.
+openclaw-qqbot is a multi-account QQ Bot service built in Go. The architecture centers on **BotManager** as the top-level orchestrator, with each account getting fully isolated dependencies. The system exposes messaging capabilities via a RESTful HTTP API and receives messages through persistent WebSocket connections to the QQ Bot gateway. A separate **Channel Server** binary bridges QQ events to CodeBuddy Code via MCP protocol.
 
 ```
                     ┌─────────────────────┐
@@ -25,7 +25,19 @@ openclaw-qqbot is a multi-account QQ Bot service built in Go. The architecture c
       ┌───────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐
       │  Account A   │ │  Account B  │ │  Account C  │
       │  (isolated)  │ │  (isolated) │ │  (isolated) │
-      └──────────────┘ └─────────────┘ └─────────────┘
+      └──────┬───────┘ └─────────────┘ └─────────────┘
+             │ webhook events
+             ▼
+      ┌──────────────┐       ┌─────────────────────┐
+      │   Webhook     │──────▶│  Channel Server      │ (separate binary)
+      │  Dispatcher   │  HTTP │  (internal/channel/)  │
+      └──────────────┘       └──────────┬──────────┘
+                                         │ MCP stdio
+                                         ▼
+                              ┌─────────────────────┐
+                              │  CodeBuddy Code      │
+                              │  (MCP client)        │
+                              └─────────────────────┘
 ```
 
 ## Component Architecture
@@ -73,6 +85,23 @@ The HTTP API server (`internal/httpapi/`) communicates with `BotManager` through
 ```
 httpapi.APIServer → BotAPI interface ← botAPIAdapter wraps *BotManager
 ```
+
+### Channel Server (`internal/channel/`)
+
+A separate binary (`cmd/qqbot-channel`) that bridges QQ Bot events to CodeBuddy Code via the MCP (Model Context Protocol) stdio transport. It runs as two concurrent components:
+
+1. **MCP stdio server** — communicates with CodeBuddy Code using JSON-RPC over stdin/stdout
+2. **HTTP webhook server** — receives forwarded QQ events from qqbot's webhook dispatcher
+
+**Key design decisions:**
+- Separate binary to avoid coupling the MCP server lifecycle with the main qqbot process
+- `claude/channel` experimental capability signals CodeBuddy Code that this is a messaging channel
+- `reply` MCP tool sends messages back to QQ via the qqbot HTTP API
+- Notifications flow server→client: webhook event → MCP notification → CodeBuddy Code processes → calls reply tool → HTTP API → QQ
+
+**Message routing:**
+- Currently uses a single `-account` flag for all replies
+- Future: route based on `account_id` from the webhook event payload
 
 ---
 
@@ -139,6 +168,46 @@ OutboundHandler.SendText/SendImage/SendVoice/...
             │
             └─ POST to QQ Bot API
                 └─ If response has ref_idx → onMessageSent hook
+```
+
+### Channel Server Message Flow (MCP)
+
+```
+QQ Bot Gateway (WebSocket)
+    │
+    ▼
+Gateway → EventHandler → WebhookDispatcher
+                                │
+                                ▼
+                    HTTP POST /webhook (async)
+                    to Channel Server (:8788)
+                                │
+                                ▼
+                        Channel Server
+                        ├─ parse event type
+                        ├─ extract content
+                        ├─ appendAttachmentInfo()
+                        │  (image/voice/video/file metadata)
+                        └─ SendNotificationToAllClients()
+                                │ MCP notification
+                                ▼
+                        CodeBuddy Code (MCP client)
+                                │ AI processes message
+                                ▼
+                        CallTool("reply", chat_id, text)
+                                │ MCP tool invocation
+                                ▼
+                        Channel Server.handleReply()
+                                │
+                                ▼
+                        HTTP POST to qqbot API
+                        /api/v1/accounts/{acct}/{type}/{id}/messages
+                                │
+                                ▼
+                        qqbot OutboundHandler
+                                │
+                                ▼
+                        QQ Bot API → QQ Bot Gateway → User
 ```
 
 ---
@@ -383,6 +452,7 @@ The image dimension parser (`internal/image/size.go`) reads binary headers direc
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `github.com/gorilla/websocket` | v1.5.3 | WebSocket client for gateway connection |
+| `github.com/mark3labs/mcp-go` | v0.46.0 | MCP (Model Context Protocol) server for Channel Server |
 | `golang.org/x/sync` | v0.20.0 | `singleflight` for token request deduplication |
 | `gopkg.in/yaml.v3` | v3.0.1 | YAML configuration parsing |
 | `modernc.org/sqlite` | v1.47.0 | Pure-Go SQLite driver (no CGO) |

@@ -184,6 +184,120 @@ Each account's webhook URL is resolved in this priority order:
 - Events are forwarded non-blocking -- gateway message processing is not delayed.
 - No authentication headers are added to webhook requests.
 
+### Webhook Payload
+
+All message events are forwarded with the following JSON structure:
+
+```json
+{
+  "account_id": "default",
+  "event_type": "C2C_MESSAGE_CREATE",
+  "timestamp": "2026-01-01T00:00:00Z",
+  "data": { ... }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `account_id` | The account that received the event |
+| `event_type` | Event type: `C2C_MESSAGE_CREATE`, `GROUP_AT_MESSAGE_CREATE`, `GUILD_MESSAGE_CREATE`, or `DIRECT_MESSAGE_CREATE` |
+| `timestamp` | Event timestamp (ISO 8601) |
+| `data` | Raw event payload (varies by event type) |
+
+---
+
+## Channel Server (MCP)
+
+The Channel Server (`cmd/qqbot-channel`) is a separate binary that bridges QQ Bot events to CodeBuddy Code via the MCP (Model Context Protocol) stdio transport. It runs as an MCP server configured in `.mcp.json`.
+
+### CLI Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-webhook-port` | `8788` | HTTP port for receiving webhook events from qqbot |
+| `-qqbot-api` | `http://127.0.0.1:9090` | qqbot HTTP API address (for sending replies) |
+| `-account` | `default` | Default QQ Bot account ID for reply routing |
+
+### Configuration
+
+The Channel Server is registered in `.mcp.json` at the project root:
+
+```json
+{
+  "mcpServers": {
+    "qq-channel": {
+      "command": "./qqbot-channel",
+      "args": ["-qqbot-api", "http://127.0.0.1:9090", "-account", "default"]
+    }
+  }
+}
+```
+
+### How It Works
+
+```
+QQ Bot Gateway → qqbot webhook forwarding → HTTP POST to Channel Server
+                                                  │
+                                                  ▼
+                                          Channel Server
+                                          ├─ parse event
+                                          ├─ extract content + attachments
+                                          └─ send MCP notification
+                                                  │
+                                                  ▼
+                                        CodeBuddy Code (MCP client)
+                                                  │
+                                                  ▼
+                                          AI processes message
+                                                  │
+                                                  ▼
+                                          calls "reply" tool
+                                                  │
+                                                  ▼
+                                        Channel Server → qqbot HTTP API
+                                                          │
+                                                          ▼
+                                                  QQ Bot Gateway
+```
+
+### MCP Capabilities
+
+The Channel Server declares the `claude/channel` experimental capability. This tells CodeBuddy Code that this server provides a messaging channel.
+
+### MCP Tools
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `reply` | `chat_id` (required), `text` (required) | Send a text reply to a QQ conversation |
+
+The `chat_id` format is determined by the conversation type:
+
+| Type | Format | Example |
+|------|--------|---------|
+| C2C (private) | `c2c:{user_openid}` | `c2c:o_abc123` |
+| Group | `group:{group_openid}` | `group:grp_abc123` |
+| Guild channel | `channel:{channel_id}` | `channel:12345` |
+| Guild DM | `dm:{channel_id}` | `dm:12345` |
+
+### MCP Notifications
+
+The Channel Server sends notifications to the MCP client (CodeBuddy Code) when new messages arrive:
+
+- **Method:** `notifications/claude/channel`
+- **Payload:** `{ "content": "...", "meta": { "source": "qq", "sender": "...", "chat_id": "..." } }`
+
+### Setting Up
+
+1. Build the Channel Server binary: `go build -o qqbot-channel ./cmd/qqbot-channel`
+2. Configure qqbot webhook forwarding to point at the Channel Server's webhook port:
+
+```yaml
+qqbot:
+  defaultWebhookUrl: "http://127.0.0.1:8788/webhook"
+```
+
+3. The `.mcp.json` file at the project root registers the Channel Server with CodeBuddy Code. No additional configuration is needed.
+
 ---
 
 ## Validation
