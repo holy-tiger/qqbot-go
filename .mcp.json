@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "qq-channel": {
-      "command": "./qqbot-channel",
-      "args": ["-qqbot-api", "http://127.0.0.1:9090", "-account", "default", "-webhook-port", "8789"]
+      "command": "./qqbot",
+      "args": ["channel", "-config", "/workspace/configs/config.yaml"]
     }
   }
 }
