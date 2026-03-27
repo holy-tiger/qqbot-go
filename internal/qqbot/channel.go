@@ -109,11 +109,11 @@ func RunChannel(cfgPath string) error {
 			eventType != "GUILD_MESSAGE_CREATE" && eventType != "DIRECT_MESSAGE_CREATE" {
 			return
 		}
-		content, chatID, source, senderID := channel.ExtractMessage(eventType, payload)
+		content, chatID, _, senderID := channel.ExtractMessage(eventType, payload)
 		if content == "" {
 			return
 		}
-		cs.PushNotification(source, senderID, chatID, content)
+		cs.ForwardMessage(senderID, chatID, content)
 	})
 
 	log.Printf("[qqbot] embedded channel mode started")

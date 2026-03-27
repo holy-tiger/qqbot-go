@@ -3,6 +3,7 @@ package channel
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/openclaw/qqbot/internal/types"
@@ -95,4 +96,28 @@ func ExtractMessage(eventType string, payload []byte) (content, chatID, source, 
 
 	source = "qq"
 	return content, chatID, source, sender
+}
+
+// permissionReplyRE matches "yes <id>" or "no <id>" permission verdicts.
+// IDs are 5 lowercase letters from [a-km-z] (excludes 'l' to avoid confusion with '1'/'I').
+var permissionReplyRE = regexp.MustCompile(`(?i)^\s*(y(?:es)?|n(?:o)?)\s+([a-km-z]{5})\s*$`)
+
+// PermissionVerdict represents a parsed permission reply.
+type PermissionVerdict struct {
+	RequestID string // the 5-char ID
+	Allowed   bool   // true = allow, false = deny
+}
+
+// ParsePermissionReply checks if a message is a permission verdict.
+// Returns nil if the message is not a permission reply.
+func ParsePermissionReply(text string) *PermissionVerdict {
+	m := permissionReplyRE.FindStringSubmatch(text)
+	if m == nil {
+		return nil
+	}
+	allowed := strings.EqualFold(m[1][:1], "y")
+	return &PermissionVerdict{
+		RequestID: strings.ToLower(m[2]),
+		Allowed:   allowed,
+	}
 }

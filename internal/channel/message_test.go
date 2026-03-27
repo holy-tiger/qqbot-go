@@ -159,3 +159,50 @@ func TestAppendAttachmentInfo_Multiple(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// --- Permission reply parsing tests ---
+
+func TestParsePermissionReply(t *testing.T) {
+	tests := []struct {
+		input  string
+		wantID string
+		wantOK bool
+	}{
+		{"yes abcde", "abcde", true},
+		{"y abcde", "abcde", true},
+		{"no abcde", "abcde", false},
+		{"n abcde", "abcde", false},
+		{"YES ABCDE", "abcde", true},
+		{"No AbCdE", "abcde", false},
+		{"  yes abcde  ", "abcde", true},
+		{"y  abcde", "abcde", true},
+		{"yes abcll", "", false},    // contains 'l' which is not in [a-km-z]
+		{"yes abc", "", false},      // only 3 chars
+		{"yes abcdef", "", false},   // 6 chars
+		{"approve abcde", "", false}, // not a valid format
+		{"yes", "", false},          // no ID
+		{"just a normal message", "", false},
+		{"", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := ParsePermissionReply(tt.input)
+			if got == nil {
+				if tt.wantID != "" {
+					t.Error("expected match, got nil")
+				}
+				return
+			}
+			if tt.wantID == "" {
+				t.Fatal("expected nil, got match")
+			}
+			if got.RequestID != tt.wantID {
+				t.Errorf("request_id = %q, want %q", got.RequestID, tt.wantID)
+			}
+			if got.Allowed != tt.wantOK {
+				t.Errorf("allowed = %v, want %v", got.Allowed, tt.wantOK)
+			}
+		})
+	}
+}

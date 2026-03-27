@@ -43,17 +43,22 @@ func newChannelServer(cfg Config, opts ...RunOption) *ChannelServer {
 		"qq-channel",
 		"1.0.0",
 		server.WithToolCapabilities(false),
-		server.WithExperimental(map[string]any{"claude/channel": struct{}{}}),
+		server.WithExperimental(map[string]any{
+			"claude/channel":             struct{}{},
+			"claude/channel/permission":  struct{}{},
+		}),
 		server.WithInstructions(`QQ 机器人消息通道。
 消息以 <channel source="qq" sender="openid" chat_id="格式"> 标签到达。
 - chat_id 格式: "c2c:user_openid" (私聊) 或 "group:group_openid" (群聊) 或 "channel:channel_id" (频道)
 - 群聊消息中 @机器人 的部分已被自动去除
 - 附件信息以 [图片/语音/视频/文件: url] 格式附加在文本末尾
+- 权限审批请求以 permission 标签到达，回复 "yes <id>" 或 "no <id>" 进行审批
 
 用 reply 工具回复消息。`),
 	)
 
 	cs.registerReplyTool()
+	cs.registerPermissionHandler()
 
 	cs.pushNotification = func(source, sender, chatID, content string) {
 		if cs.mcp == nil {
@@ -115,6 +120,61 @@ func (cs *ChannelServer) PushNotification(source, sender, chatID, content string
 	if cs.pushNotification != nil {
 		cs.pushNotification(source, sender, chatID, content)
 	}
+}
+
+// ForwardMessage routes a message: checks for permission replies first,
+// otherwise forwards as a normal notification.
+func (cs *ChannelServer) ForwardMessage(sender, chatID, content string) {
+	if verdict := ParsePermissionReply(content); verdict != nil {
+		behavior := "deny"
+		if verdict.Allowed {
+			behavior = "allow"
+		}
+		log.Printf("[channel] permission verdict: %s -> %s", verdict.RequestID, behavior)
+		cs.SendPermissionVerdict(verdict.RequestID, behavior)
+		return
+	}
+	cs.PushNotification("qq", sender, chatID, content)
+}
+
+// SendPermissionVerdict sends a permission approval/denial to CodeBuddy Code.
+func (cs *ChannelServer) SendPermissionVerdict(requestID, behavior string) {
+	if cs.mcp == nil {
+		return
+	}
+	cs.mcp.SendNotificationToAllClients("notifications/claude/channel/permission", map[string]any{
+		"request_id": requestID,
+		"behavior":   behavior,
+	})
+}
+
+// PushPermissionRequest forwards a permission request from CodeBuddy Code to QQ.
+func (cs *ChannelServer) PushPermissionRequest(requestID, toolName, description, inputPreview string) {
+	content := toolName + ": " + description
+	if inputPreview != "" {
+		content += "\n" + inputPreview
+	}
+	cs.PushNotification("qq", "permission", "", content)
+}
+
+// registerPermissionHandler registers the notification handler for permission requests.
+func (cs *ChannelServer) registerPermissionHandler() {
+	if cs.mcp == nil {
+		return
+	}
+	cs.mcp.AddNotificationHandler("notifications/claude/channel/permission_request",
+		func(ctx context.Context, notification mcp.JSONRPCNotification) {
+			fields := notification.Params.AdditionalFields
+			requestID, _ := fields["request_id"].(string)
+			toolName, _ := fields["tool_name"].(string)
+			description, _ := fields["description"].(string)
+			inputPreview, _ := fields["input_preview"].(string)
+			if requestID == "" {
+				return
+			}
+			log.Printf("[channel] permission request: %s %s (%s)", requestID, toolName, description)
+			cs.PushPermissionRequest(requestID, toolName, description, inputPreview)
+		})
 }
 
 // MCPServer returns the underlying MCP server. Used by integration tests.

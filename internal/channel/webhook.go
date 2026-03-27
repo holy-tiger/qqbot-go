@@ -91,7 +91,7 @@ func (cs *ChannelServer) handleC2CMessage(event webhookEvent) {
 
 	content := appendAttachmentInfo(msg.Content, msg.Attachments)
 	chatID := fmt.Sprintf("c2c:%s", msg.Author.UserOpenID)
-	cs.pushNotification("qq", msg.Author.UserOpenID, chatID, content)
+	cs.forwardMessage(msg.Author.UserOpenID, chatID, content)
 }
 
 func (cs *ChannelServer) handleGroupMessage(event webhookEvent) {
@@ -105,7 +105,7 @@ func (cs *ChannelServer) handleGroupMessage(event webhookEvent) {
 	content = appendAttachmentInfo(content, msg.Attachments)
 
 	chatID := fmt.Sprintf("group:%s", msg.GroupOpenID)
-	cs.pushNotification("qq", msg.Author.MemberOpenID, chatID, content)
+	cs.forwardMessage(msg.Author.MemberOpenID, chatID, content)
 }
 
 func (cs *ChannelServer) handleGuildMessage(event webhookEvent) {
@@ -119,7 +119,7 @@ func (cs *ChannelServer) handleGuildMessage(event webhookEvent) {
 	content = appendAttachmentInfo(content, msg.Attachments)
 
 	chatID := fmt.Sprintf("channel:%s", msg.ChannelID)
-	cs.pushNotification("qq", msg.Author.ID, chatID, content)
+	cs.forwardMessage(msg.Author.ID, chatID, content)
 }
 
 func (cs *ChannelServer) handleDirectMessage(event webhookEvent) {
@@ -133,7 +133,7 @@ func (cs *ChannelServer) handleDirectMessage(event webhookEvent) {
 	content = appendAttachmentInfo(content, msg.Attachments)
 
 	chatID := fmt.Sprintf("dm:%s", msg.ChannelID)
-	cs.pushNotification("qq", msg.Author.ID, chatID, content)
+	cs.forwardMessage(msg.Author.ID, chatID, content)
 }
 
 // stripAtMention removes @bot mentions from the beginning of a message.
@@ -156,4 +156,19 @@ func stripAtMention(content string) string {
 		}
 	}
 	return content
+}
+
+// forwardMessage routes a message: checks for permission replies first,
+// otherwise forwards as a normal notification.
+func (cs *ChannelServer) forwardMessage(sender, chatID, content string) {
+	if verdict := ParsePermissionReply(content); verdict != nil {
+		behavior := "deny"
+		if verdict.Allowed {
+			behavior = "allow"
+		}
+		log.Printf("[channel] permission verdict: %s -> %s", verdict.RequestID, behavior)
+		cs.SendPermissionVerdict(verdict.RequestID, behavior)
+		return
+	}
+	cs.pushNotification("qq", sender, chatID, content)
 }
