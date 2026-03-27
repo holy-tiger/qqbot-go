@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -38,4 +39,60 @@ func appendAttachmentInfo(content string, attachments []types.MessageAttachment)
 		}
 	}
 	return sb.String()
+}
+
+// ExtractMessage extracts content, chatID, source, and sender from a raw event payload.
+// Returns empty content if the event type is not a message event or parsing fails.
+func ExtractMessage(eventType string, payload []byte) (content, chatID, source, sender string) {
+	switch eventType {
+	case "C2C_MESSAGE_CREATE":
+		var event types.C2CMessageEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return "", "", "", ""
+		}
+		sender = event.Author.UserOpenID
+		chatID = "c2c:" + sender
+		content = appendAttachmentInfo(event.Content, event.Attachments)
+
+	case "GROUP_AT_MESSAGE_CREATE":
+		var event types.GroupMessageEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return "", "", "", ""
+		}
+		sender = event.Author.MemberOpenID
+		chatID = "group:" + event.GroupOpenID
+		content = appendAttachmentInfo(event.Content, event.Attachments)
+
+	case "GUILD_MESSAGE_CREATE":
+		var event types.GuildMessageEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return "", "", "", ""
+		}
+		sender = event.Author.ID
+		chatID = "channel:" + event.ChannelID
+		content = appendAttachmentInfo(event.Content, event.Attachments)
+
+	case "DIRECT_MESSAGE_CREATE":
+		var event struct {
+			Content     string                   `json:"content"`
+			Author      types.C2CAuthor          `json:"author"`
+			ChannelID   string                   `json:"channel_id"`
+			Attachments []types.MessageAttachment `json:"attachments"`
+		}
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return "", "", "", ""
+		}
+		sender = event.Author.UserOpenID
+		if sender == "" {
+			sender = event.Author.ID
+		}
+		chatID = "dm:" + event.ChannelID
+		content = appendAttachmentInfo(event.Content, event.Attachments)
+
+	default:
+		return "", "", "", ""
+	}
+
+	source = "qq"
+	return content, chatID, source, sender
 }

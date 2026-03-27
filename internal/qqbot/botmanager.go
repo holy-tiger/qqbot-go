@@ -21,6 +21,9 @@ type WebhookDispatcher interface {
 	SetURL(accountID, url string)
 }
 
+// EventHandler is a callback for processing QQ Bot events.
+type EventHandler func(accountID string, eventType string, payload []byte)
+
 // Account represents a single QQ Bot account with all its isolated dependencies.
 type Account struct {
 	ID         string
@@ -36,7 +39,8 @@ type Account struct {
 	TTS        *audio.TTSProvider
 	DataDir    string
 
-	eventHandler gateway.EventHandler
+	eventHandler  gateway.EventHandler
+	forwarders  []EventHandler
 }
 
 // GetID returns the account ID.
@@ -60,14 +64,15 @@ func (s AccountStatus) IsConnected() bool { return s.Connected }
 
 // BotManager manages multiple QQ Bot accounts concurrently with per-account isolation.
 type BotManager struct {
-	accounts  map[string]*Account
-	mu        sync.RWMutex
-	dataDir   string
-	db        *store.DB
-	started   bool
-	ctx       context.Context
-	cancel    context.CancelFunc
-	webhook   WebhookDispatcher
+	accounts        map[string]*Account
+	mu              sync.RWMutex
+	dataDir         string
+	db              *store.DB
+	started         bool
+	ctx             context.Context
+	cancel          context.CancelFunc
+	webhook         WebhookDispatcher
+	eventForwarders []EventHandler
 }
 
 // NewBotManager creates a new BotManager that stores data in dataDir.
@@ -185,6 +190,14 @@ func (m *BotManager) newEventHandler(userStore *store.KnownUsersStore) gateway.E
 		// Forward all events to webhook dispatcher
 		if m.webhook != nil {
 			m.webhook.Dispatch(accountID, eventType, payload)
+		}
+
+		// Forward to additional event handlers (e.g., embedded channel)
+		m.mu.RLock()
+		forwarders := m.eventForwarders
+		m.mu.RUnlock()
+		for _, fn := range forwarders {
+			fn(accountID, eventType, payload)
 		}
 	}
 }
@@ -508,6 +521,14 @@ func (m *BotManager) ListAccountIDs() []string {
 }
 
 // SetWebhookDispatcher sets the webhook dispatcher for event forwarding.
+// SetEventHandler sets additional event handlers that are called for every event
+// on every account. Used by the embedded channel mode to bridge events to MCP.
+func (m *BotManager) SetEventHandler(h EventHandler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.eventForwarders = append(m.eventForwarders, h)
+}
+
 func (m *BotManager) SetWebhookDispatcher(d WebhookDispatcher) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

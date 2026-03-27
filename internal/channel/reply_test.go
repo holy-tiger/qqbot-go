@@ -10,20 +10,25 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// testServer creates a ChannelServer with a mock HTTP backend for testing.
+func testServer(t *testing.T, handler http.HandlerFunc) (*ChannelServer, *httptest.Server) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	cfg := Config{Account: "acct1", QQBotAPI: ts.URL}
+	cs := newChannelServer(cfg)
+	return cs, ts
+}
+
 func TestHandleReply_C2C(t *testing.T) {
 	var receivedPath, receivedBody string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cs, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
 		receivedBody = body["content"]
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: ts.URL},
-	}
+	})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{"chat_id": "c2c:o_user1", "text": "hello"}
@@ -47,15 +52,10 @@ func TestHandleReply_C2C(t *testing.T) {
 
 func TestHandleReply_Group(t *testing.T) {
 	var receivedPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cs, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: ts.URL},
-	}
+	})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{"chat_id": "group:o_group1", "text": "hi group"}
@@ -76,15 +76,10 @@ func TestHandleReply_Group(t *testing.T) {
 
 func TestHandleReply_Channel(t *testing.T) {
 	var receivedPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cs, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: ts.URL},
-	}
+	})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{"chat_id": "channel:12345", "text": "hi channel"}
@@ -105,15 +100,10 @@ func TestHandleReply_Channel(t *testing.T) {
 
 func TestHandleReply_DM(t *testing.T) {
 	var receivedPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cs, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: ts.URL},
-	}
+	})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{"chat_id": "dm:54321", "text": "hi dm"}
@@ -126,7 +116,6 @@ func TestHandleReply_DM(t *testing.T) {
 		t.Fatalf("unexpected error result")
 	}
 
-	// dm uses /channels/ API path (same as channel)
 	wantPath := "/api/v1/accounts/acct1/channels/54321/messages"
 	if receivedPath != wantPath {
 		t.Errorf("path = %q, want %q", receivedPath, wantPath)
@@ -134,9 +123,7 @@ func TestHandleReply_DM(t *testing.T) {
 }
 
 func TestHandleReply_InvalidChatID(t *testing.T) {
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"},
-	}
+	cs := newChannelServer(Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"})
 
 	tests := []struct {
 		name   string
@@ -165,9 +152,7 @@ func TestHandleReply_InvalidChatID(t *testing.T) {
 }
 
 func TestHandleReply_MissingParams(t *testing.T) {
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"},
-	}
+	cs := newChannelServer(Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"})
 
 	// Missing text
 	req := mcp.CallToolRequest{}
@@ -193,14 +178,9 @@ func TestHandleReply_MissingParams(t *testing.T) {
 }
 
 func TestHandleReply_HTTPError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cs, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: ts.URL},
-	}
+	})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{"chat_id": "c2c:o_u", "text": "fail"}
@@ -215,9 +195,7 @@ func TestHandleReply_HTTPError(t *testing.T) {
 }
 
 func TestHandleReply_ConnectionRefused(t *testing.T) {
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:1"},
-	}
+	cs := newChannelServer(Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:1"})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{"chat_id": "c2c:o_u", "text": "fail"}
@@ -277,8 +255,8 @@ func TestBuildRequestBody(t *testing.T) {
 		text      string
 		mediaType string
 		mediaURL  string
-		wantKey   string // check this key exists in JSON
-		wantVal   string // and has this value
+		wantKey   string
+		wantVal   string
 	}{
 		{"text only", "hello", "", "", "content", "hello"},
 		{"image", "caption", "image", "http://img.png", "image_url", "http://img.png"},
@@ -305,16 +283,11 @@ func TestBuildRequestBody(t *testing.T) {
 func TestHandleReply_Image(t *testing.T) {
 	var receivedPath string
 	var receivedBody map[string]string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cs, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		json.NewDecoder(r.Body).Decode(&receivedBody)
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: ts.URL},
-	}
+	})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -345,15 +318,10 @@ func TestHandleReply_Image(t *testing.T) {
 
 func TestHandleReply_Image_Group(t *testing.T) {
 	var receivedPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cs, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: ts.URL},
-	}
+	})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -377,9 +345,7 @@ func TestHandleReply_Image_Group(t *testing.T) {
 }
 
 func TestHandleReply_Media_UnsupportedChatType(t *testing.T) {
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"},
-	}
+	cs := newChannelServer(Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -399,9 +365,7 @@ func TestHandleReply_Media_UnsupportedChatType(t *testing.T) {
 }
 
 func TestHandleReply_Media_MissingURL(t *testing.T) {
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"},
-	}
+	cs := newChannelServer(Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -420,9 +384,7 @@ func TestHandleReply_Media_MissingURL(t *testing.T) {
 }
 
 func TestHandleReply_Media_InvalidType(t *testing.T) {
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"},
-	}
+	cs := newChannelServer(Config{Account: "acct1", QQBotAPI: "http://127.0.0.1:9090"})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -444,16 +406,11 @@ func TestHandleReply_Media_InvalidType(t *testing.T) {
 func TestHandleReply_File(t *testing.T) {
 	var receivedPath string
 	var receivedBody map[string]string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cs, _ := testServer(t, func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		json.NewDecoder(r.Body).Decode(&receivedBody)
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	cs := &ChannelServer{
-		config: Config{Account: "acct1", QQBotAPI: ts.URL},
-	}
+	})
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
