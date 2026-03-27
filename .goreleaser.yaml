@@ -18,6 +18,20 @@ builds:
       - amd64
       - arm64
 
+  - main: ./cmd/qqbot-channel
+    binary: qqbot-channel
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
 archives:
   - format: tar.gz
     name_template: >-
