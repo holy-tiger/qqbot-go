@@ -21,11 +21,12 @@ import (
 // testHarness sets up a real MCP server (our ChannelServer's MCPServer) connected
 // to a real MCP client via io.Pipe, simulating the production stdio transport.
 type testHarness struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	cs        *ChannelServer
-	mcpClient *client.Client
-	transport transport.Interface
+	ctx        context.Context
+	cancel     context.CancelFunc
+	cs         *ChannelServer
+	mcpClient  *client.Client
+	transport  transport.Interface
+	toServer   *io.PipeWriter // inject client→server messages (e.g. permission notifications)
 }
 
 func newTestHarness(t *testing.T, qqbotAPI string) *testHarness {
@@ -87,6 +88,7 @@ func newTestHarness(t *testing.T, qqbotAPI string) *testHarness {
 		cs:        cs,
 		mcpClient: mcpClient,
 		transport: clientTransport,
+		toServer:  clientWriter,
 	}
 }
 
@@ -409,4 +411,80 @@ func TestIntegration_FullReplyPipeline(t *testing.T) {
 	if receivedBody != "2+2 = 4" {
 		t.Errorf("body = %q, want %q", receivedBody, "2+2 = 4")
 	}
+}
+
+// TestIntegration_PermissionRelay tests the full permission relay flow:
+// 1. QQ message arrives via ForwardMessage (sets chat_id tracking)
+// 2. CodeBuddy Code sends a permission_request notification to the MCP server
+// 3. The server forwards the request to QQ via sender.Send()
+func TestIntegration_PermissionRelay(t *testing.T) {
+	type permissionCall struct {
+		path string
+		text string
+	}
+	callCh := make(chan permissionCall, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		callCh <- permissionCall{path: r.URL.Path, text: body["content"]}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	h := newTestHarness(t, ts.URL)
+	defer h.close()
+
+	// Step 1: Simulate a QQ user sending a message (sets chat_id tracking)
+	h.cs.ForwardMessage("o_permuser", "c2c:o_permuser", "do something dangerous")
+
+	// Step 2: Simulate CodeBuddy Code sending a permission_request notification.
+	// In MCP, client→server notifications are sent as JSON-RPC over the transport.
+	// We inject a raw JSON-RPC notification through the pipe.
+	notif := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/claude/channel/permission_request",
+		"params": map[string]any{
+			"request_id":    "abcde",
+			"tool_name":     "Bash",
+			"description":   "Execute shell command",
+			"input_preview": "rm -rf /tmp/test",
+		},
+	}
+	notifJSON, _ := json.Marshal(notif)
+	notifJSON = append(notifJSON, '\n')
+	h.toServer.Write(notifJSON)
+
+	// Step 3: Wait for the permission request to be forwarded to QQ via HTTP
+	select {
+	case call := <-callCh:
+		wantPath := "/api/v1/accounts/test-acct/c2c/o_permuser/messages"
+		if call.path != wantPath {
+			t.Errorf("path = %q, want %q", call.path, wantPath)
+		}
+		// Verify content includes request_id and reply instructions
+		if !contains(call.text, "abcde") {
+			t.Errorf("text should contain request_id 'abcde', got %q", call.text)
+		}
+		if !contains(call.text, "yes abcde") {
+			t.Errorf("text should contain 'yes abcde', got %q", call.text)
+		}
+		if !contains(call.text, "no abcde") {
+			t.Errorf("text should contain 'no abcde', got %q", call.text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for permission request to be forwarded to QQ")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchString(s, substr)
+}
+
+func searchString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
