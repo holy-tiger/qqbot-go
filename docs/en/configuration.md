@@ -280,7 +280,19 @@ QQ Bot Gateway → qqbot webhook forwarding → HTTP POST to Channel Server
 The Channel Server declares two experimental capabilities:
 
 - `claude/channel` — tells CodeBuddy Code that this server provides a messaging channel
-- `claude/channel/permission` — enables permission relay, allowing tool call approvals to be forwarded to QQ for remote review
+- `claude/channel/permission` — enables permission relay: when CodeBuddy Code requests tool call approval, the request is forwarded to the QQ user who triggered it. The user can reply with `yes <id>` or `no <id>` to approve or deny.
+
+### Permission Relay
+
+When the `claude/channel/permission` capability is enabled, the permission flow works as follows:
+
+1. A QQ user sends a message to the bot
+2. CodeBuddy Code processes the message and determines a tool call needs approval
+3. The Channel Server forwards the approval request to the QQ user who sent the last message
+4. The user replies with `yes <id>` or `no <id>` (IDs are 5-letter codes like `abcde`)
+5. The verdict is sent back to CodeBuddy Code, which proceeds or cancels the tool call
+
+**Note:** The permission request is sent to the most recent active sender. This works correctly because CodeBuddy Code processes messages sequentially within a session.
 
 ### MCP Tools
 

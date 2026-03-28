@@ -284,7 +284,15 @@ Channel Server 声明了两个实验性能力：
 
 ### 权限审批
 
-当 CodeBuddy Code 需要用户审批某个工具调用时，权限请求会通过 MCP 通知推送到 QQ。用户可以通过回复 `"yes <id>"` 或 `"no <id>"` 进行审批，审批结果会回传给 CodeBuddy Code。
+当 `claude/channel/permission` 能力启用时，权限审批流程如下：
+
+1. QQ 用户发送消息给机器人
+2. CodeBuddy Code 处理消息并判断某个工具调用需要审批
+3. Channel Server 将审批请求转发给最后发送消息的 QQ 用户
+4. 用户回复 `"yes <id>"` 或 `"no <id>"`（ID 为 5 位字母代码，如 `abcde`）
+5. 审批结果回传给 CodeBuddy Code，继续或取消工具调用
+
+**注意：** 权限请求会发送给最近活跃的用户。由于 CodeBuddy Code 在会话中按顺序处理消息，这在大多数情况下是正确的。
 
 ### MCP 工具
 
