@@ -2,7 +2,9 @@ package channel
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -14,6 +16,9 @@ type ChannelServer struct {
 	config           Config
 	sender           Sender
 	pushNotification func(source, sender, chatID, content string)
+	chatIDMu         sync.Mutex
+	chatIDMap        map[string]string // sender -> chat_id
+	lastSender       string            // most recent sender (for permission routing)
 }
 
 // RunOption configures the ChannelServer.
@@ -30,7 +35,7 @@ func WithSender(s Sender) RunOption {
 // newChannelServer creates a ChannelServer with MCP server initialized.
 // This is the shared setup used by both Run() and integration tests.
 func newChannelServer(cfg Config, opts ...RunOption) *ChannelServer {
-	cs := &ChannelServer{config: cfg}
+	cs := &ChannelServer{config: cfg, chatIDMap: make(map[string]string)}
 
 	for _, opt := range opts {
 		opt(cs)
@@ -125,7 +130,13 @@ func (cs *ChannelServer) PushNotification(source, sender, chatID, content string
 
 // ForwardMessage routes a message: checks for permission replies first,
 // otherwise forwards as a normal notification.
+// It also tracks the sender->chat_id mapping for permission request routing.
 func (cs *ChannelServer) ForwardMessage(sender, chatID, content string) {
+	cs.chatIDMu.Lock()
+	cs.chatIDMap[sender] = chatID
+	cs.lastSender = sender
+	cs.chatIDMu.Unlock()
+
 	if verdict := ParsePermissionReply(content); verdict != nil {
 		behavior := "deny"
 		if verdict.Allowed {
@@ -150,12 +161,32 @@ func (cs *ChannelServer) SendPermissionVerdict(requestID, behavior string) {
 }
 
 // PushPermissionRequest forwards a permission request from CodeBuddy Code to QQ.
+// It sends a text message to the most recent sender's chat.
 func (cs *ChannelServer) PushPermissionRequest(requestID, toolName, description, inputPreview string) {
-	content := toolName + ": " + description
+	cs.chatIDMu.Lock()
+	chatID := cs.chatIDMap[cs.lastSender]
+	cs.chatIDMu.Unlock()
+	if chatID == "" {
+		log.Printf("[channel] no active chat_id, dropping permission request %s", requestID)
+		return
+	}
+
+	content := fmt.Sprintf("[审批请求 %s] %s: %s", requestID, toolName, description)
 	if inputPreview != "" {
 		content += "\n" + inputPreview
 	}
-	cs.PushNotification("qq", "permission", "", content)
+	content += "\n回复 yes " + requestID + " 或 no " + requestID
+
+	chatType, targetID, err := parseChatID(chatID)
+	if err != nil {
+		log.Printf("[channel] invalid chat_id %q: %v", chatID, err)
+		return
+	}
+
+	err = cs.sender.Send(context.Background(), cs.config.Account, chatType, targetID, content, "", "")
+	if err != nil {
+		log.Printf("[channel] failed to send permission request to QQ: %v", err)
+	}
 }
 
 // registerPermissionHandler registers the notification handler for permission requests.

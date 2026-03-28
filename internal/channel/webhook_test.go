@@ -2,9 +2,11 @@ package channel
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -45,7 +47,8 @@ func TestStripAtMention(t *testing.T) {
 
 func newTestChannelServer() *ChannelServer {
 	return &ChannelServer{
-		config: Config{Account: "default", QQBotAPI: "http://127.0.0.1:9090"},
+		config:    Config{Account: "default", QQBotAPI: "http://127.0.0.1:9090"},
+		chatIDMap: make(map[string]string),
 	}
 }
 
@@ -280,6 +283,134 @@ func TestHandleWebhook_DirectMessage(t *testing.T) {
 	if capturedChatID != "dm:87654321" {
 		t.Errorf("expected chatID %q, got %q", "dm:87654321", capturedChatID)
 	}
+}
+
+func TestForwardMessage_TracksChatID(t *testing.T) {
+	cs := newTestChannelServer()
+
+	cs.ForwardMessage("sender1", "c2c:o_user1", "hello")
+	cs.ForwardMessage("sender2", "group:o_group1", "world")
+
+	cs.chatIDMu.Lock()
+	defer cs.chatIDMu.Unlock()
+
+	if cs.chatIDMap["sender1"] != "c2c:o_user1" {
+		t.Errorf("expected sender1 -> c2c:o_user1, got %q", cs.chatIDMap["sender1"])
+	}
+	if cs.chatIDMap["sender2"] != "group:o_group1" {
+		t.Errorf("expected sender2 -> group:o_group1, got %q", cs.chatIDMap["sender2"])
+	}
+	if cs.lastSender != "sender2" {
+		t.Errorf("expected lastSender sender2, got %q", cs.lastSender)
+	}
+}
+
+func TestPushPermissionRequest_SendsToQQ(t *testing.T) {
+	cs := newTestChannelServer()
+
+	var sent struct {
+		chatType  string
+		targetID  string
+		text      string
+		mediaType string
+	}
+	cs.sender = &mockSender{fn: func(ctx context.Context, accountID, chatType, targetID, text, mediaType, mediaURL string) error {
+		sent.chatType = chatType
+		sent.targetID = targetID
+		sent.text = text
+		sent.mediaType = mediaType
+		return nil
+	}}
+
+	// Simulate a message arriving first (sets chat_id tracking)
+	cs.ForwardMessage("sender1", "c2c:o_user1", "hello")
+
+	// Now simulate a permission request
+	cs.PushPermissionRequest("req123", "Bash", "run go test", "go test -race ./...")
+
+	if sent.chatType != "c2c" {
+		t.Errorf("expected chatType c2c, got %q", sent.chatType)
+	}
+	if sent.targetID != "o_user1" {
+		t.Errorf("expected targetID o_user1, got %q", sent.targetID)
+	}
+	if sent.mediaType != "" {
+		t.Errorf("expected empty mediaType, got %q", sent.mediaType)
+	}
+	// Check content includes request_id, tool info, and reply instructions
+	if !strings.Contains(sent.text, "req123") {
+		t.Errorf("expected text to contain req123, got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "yes req123") {
+		t.Errorf("expected text to contain 'yes req123', got %q", sent.text)
+	}
+	if !strings.Contains(sent.text, "no req123") {
+		t.Errorf("expected text to contain 'no req123', got %q", sent.text)
+	}
+}
+
+func TestPushPermissionRequest_NoActiveChat(t *testing.T) {
+	cs := newTestChannelServer()
+	// No ForwardMessage called, so chatIDMap is empty
+	// Should not panic or error, just log
+	cs.PushPermissionRequest("req1", "Bash", "test", "")
+}
+
+func TestPushPermissionRequest_GroupChat(t *testing.T) {
+	cs := newTestChannelServer()
+
+	var sent struct {
+		chatType string
+		targetID string
+	}
+	cs.sender = &mockSender{fn: func(ctx context.Context, _, chatType, targetID, _, _, _ string) error {
+		sent.chatType = chatType
+		sent.targetID = targetID
+		return nil
+	}}
+
+	cs.ForwardMessage("member1", "group:o_grp1", "hello")
+	cs.PushPermissionRequest("req1", "Edit", "edit file", "")
+
+	if sent.chatType != "group" {
+		t.Errorf("expected group, got %q", sent.chatType)
+	}
+	if sent.targetID != "o_grp1" {
+		t.Errorf("expected o_grp1, got %q", sent.targetID)
+	}
+}
+
+func TestHandleWebhook_PermissionReplyVerdict(t *testing.T) {
+	v := ParsePermissionReply("yes abcde")
+	if v == nil || !v.Allowed || v.RequestID != "abcde" {
+		t.Fatalf("expected allowed verdict for abcde, got %v", v)
+	}
+
+	v = ParsePermissionReply("no xyzab")
+	if v == nil || v.Allowed || v.RequestID != "xyzab" {
+		t.Fatalf("expected denied verdict for xyzab, got %v", v)
+	}
+
+	// Case insensitive
+	v = ParsePermissionReply("YES abcde")
+	if v == nil || !v.Allowed {
+		t.Fatalf("expected YES to parse as allowed, got %v", v)
+	}
+
+	// Not a permission reply
+	v = ParsePermissionReply("hello world")
+	if v != nil {
+		t.Fatalf("expected nil for non-permission text, got %v", v)
+	}
+}
+
+// mockSender is a test double that records Send calls.
+type mockSender struct {
+	fn func(ctx context.Context, accountID, chatType, targetID, text, mediaType, mediaURL string) error
+}
+
+func (s *mockSender) Send(ctx context.Context, accountID, chatType, targetID, text, mediaType, mediaURL string) error {
+	return s.fn(ctx, accountID, chatType, targetID, text, mediaType, mediaURL)
 }
 
 func TestHandleWebhook_ConcurrentRequests(t *testing.T) {
