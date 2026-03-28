@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -146,7 +147,26 @@ func (cs *ChannelServer) ForwardMessage(sender, chatID, content string) {
 		cs.SendPermissionVerdict(verdict.RequestID, behavior)
 		return
 	}
+	// Acknowledge receipt to the user before forwarding to CodeBuddy Code.
+	cs.sendAck(chatID)
 	cs.PushNotification("qq", sender, chatID, content)
+}
+
+// sendAck sends a quick acknowledgment message to the user.
+// Failures are silently ignored — the message will still be forwarded.
+func (cs *ChannelServer) sendAck(chatID string) {
+	if cs.sender == nil {
+		return
+	}
+	chatType, targetID, err := parseChatID(chatID)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := cs.sender.Send(ctx, cs.config.Account, chatType, targetID, "收到", "", ""); err != nil {
+		log.Printf("[channel] failed to send ack: %v", err)
+	}
 }
 
 // SendPermissionVerdict sends a permission approval/denial to CodeBuddy Code.
