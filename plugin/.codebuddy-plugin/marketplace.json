@@ -1,0 +1,10 @@
+{
+  "name": "QQ Bot Marketplace",
+  "plugins": [
+    {
+      "name": "qqbot-channel",
+      "source": ".",
+      "description": "QQ Bot MCP Channel Server - bridges QQ messaging to CodeBuddy Code"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "qqbot-channel",
+  "version": "0.3.0",
+  "description": "QQ Bot MCP Channel Server - bridges QQ messaging to CodeBuddy Code via MCP protocol",
+  "author": {
+    "name": "holy-tiger",
+    "email": "holy.tiger@example.com"
+  },
+  "homepage": "https://github.com/holy-tiger/qqbot-go",
+  "repository": "https://github.com/holy-tiger/qqbot-go",
+  "keywords": ["qq", "bot", "mcp", "channel", "messaging", "codebuddy"],
+  "category": "开发工具"
+}
