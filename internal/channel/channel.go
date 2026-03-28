@@ -58,6 +58,7 @@ func newChannelServer(cfg Config, opts ...RunOption) *ChannelServer {
 	)
 
 	cs.registerReplyTool()
+	cs.registerRemindTools()
 	cs.registerPermissionHandler()
 
 	cs.pushNotification = func(source, sender, chatID, content string) {

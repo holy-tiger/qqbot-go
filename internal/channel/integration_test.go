@@ -114,8 +114,8 @@ func TestIntegration_ServerInitialization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(result.Tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(result.Tools))
+	if len(result.Tools) != 3 {
+		t.Fatalf("expected 3 tools, got %d", len(result.Tools))
 	}
 }
 
@@ -133,27 +133,37 @@ func TestIntegration_ListTools(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 
-	if len(result.Tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(result.Tools))
+	if len(result.Tools) != 3 {
+		t.Fatalf("expected 3 tools, got %d", len(result.Tools))
 	}
 
-	tool := result.Tools[0]
-	if tool.Name != "reply" {
-		t.Errorf("expected tool name %q, got %q", "reply", tool.Name)
+	// Check reply tool
+	var replyTool *mcp.Tool
+	for i := range result.Tools {
+		if result.Tools[i].Name == "reply" {
+			replyTool = &result.Tools[i]
+			break
+		}
+	}
+	if replyTool == nil {
+		t.Fatal("missing reply tool")
+	}
+	if replyTool.Name != "reply" {
+		t.Errorf("expected tool name %q, got %q", "reply", replyTool.Name)
 	}
 
 	// Verify tool schema has chat_id, text, media_type, and media_url properties
-	if len(tool.InputSchema.Properties) != 4 {
-		t.Errorf("expected 4 properties, got %d", len(tool.InputSchema.Properties))
+	if len(replyTool.InputSchema.Properties) != 4 {
+		t.Errorf("expected 4 properties, got %d", len(replyTool.InputSchema.Properties))
 	}
-	if _, ok := tool.InputSchema.Properties["chat_id"]; !ok {
+	if _, ok := replyTool.InputSchema.Properties["chat_id"]; !ok {
 		t.Error("missing chat_id parameter")
 	}
-	if _, ok := tool.InputSchema.Properties["text"]; !ok {
+	if _, ok := replyTool.InputSchema.Properties["text"]; !ok {
 		t.Error("missing text parameter")
 	}
-	if len(tool.InputSchema.Required) != 2 {
-		t.Errorf("expected 2 required params, got %d", len(tool.InputSchema.Required))
+	if len(replyTool.InputSchema.Required) != 2 {
+		t.Errorf("expected 2 required params, got %d", len(replyTool.InputSchema.Required))
 	}
 }
 
