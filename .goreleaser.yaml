@@ -3,7 +3,8 @@ version: 2
 project_name: qqbot
 
 builds:
-  - main: ./cmd/qqbot
+  - id: qqbot
+    main: ./cmd/qqbot
     binary: qqbot
     env:
       - CGO_ENABLED=0
@@ -18,7 +19,8 @@ builds:
       - amd64
       - arm64
 
-  - main: ./cmd/qqbot-channel
+  - id: qqbot-channel
+    main: ./cmd/qqbot-channel
     binary: qqbot-channel
     env:
       - CGO_ENABLED=0
