@@ -277,13 +277,18 @@ QQ Bot Gateway → qqbot webhook forwarding → HTTP POST to Channel Server
 
 ### MCP Capabilities
 
-The Channel Server declares the `claude/channel` experimental capability. This tells CodeBuddy Code that this server provides a messaging channel.
+The Channel Server declares two experimental capabilities:
+
+- `claude/channel` — tells CodeBuddy Code that this server provides a messaging channel
+- `claude/channel/permission` — enables permission relay, allowing tool call approvals to be forwarded to QQ for remote review
 
 ### MCP Tools
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `reply` | `chat_id` (required), `text` (required), `media_type` (optional), `media_url` (optional) | Send a text or media reply to a QQ conversation |
+| `remind` | `chat_id` (required), `text` (required), `schedule` (optional) | Create a scheduled reminder (c2c and group only) that sends a text message at the specified time |
+| `cancel_reminder` | `job_id` (required) | Cancel a previously created reminder |
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|

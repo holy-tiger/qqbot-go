@@ -25,7 +25,19 @@ openclaw-qqbot 是一个使用 Go 构建的多账号 QQ Bot 服务。架构以 *
       ┌───────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐
       │  Account A   │ │  Account B  │ │  Account C  │
       │  (isolated)  │ │  (isolated) │ │  (isolated) │
-      └──────────────┘ └─────────────┘ └─────────────┘
+      └──────┬───────┘ └─────────────┘ └─────────────┘
+             │ webhook events
+             ▼
+      ┌──────────────┐       ┌─────────────────────┐
+      │   Webhook     │──────▶│  Channel Server      │ (embedded or standalone)
+      │  Dispatcher   │  HTTP │  (internal/channel/)  │
+      └──────────────┘       └──────────┬──────────┘
+                                         │ MCP stdio
+                                         ▼
+                              ┌─────────────────────┐
+                              │  CodeBuddy Code      │
+                              │  (MCP client)        │
+                              └─────────────────────┘
 ```
 
 ## 组件架构
@@ -73,6 +85,29 @@ HTTP API 服务器（`internal/httpapi/`）通过 `BotAPI` 接口与 `BotManager
 ```
 httpapi.APIServer → BotAPI interface ← botAPIAdapter wraps *BotManager
 ```
+
+### Channel Server (`internal/channel/`)
+
+通过 MCP（Model Context Protocol）stdio 传输层将 QQ Bot 事件桥接到 CodeBuddy Code。支持两种部署模式：
+
+- **内嵌模式** — 作为 `qqbot channel` 子命令运行，共享同一进程和配置
+- **独立模式** — 作为单独的二进制文件运行（`cmd/qqbot-channel`）
+
+两种模式下，Channel Server 运行两个并发组件：
+
+1. **MCP stdio 服务器** — 通过 stdin/stdout 上的 JSON-RPC 与 CodeBuddy Code 通信
+2. **HTTP webhook 服务器** — 接收来自 qqbot webhook 调度器转发的 QQ 事件
+
+**关键设计决策：**
+- `claude/channel` 和 `claude/channel/permission` 实验性能力告知 CodeBuddy Code 此服务器提供消息通道和权限审批
+- `reply` MCP 工具通过 qqbot HTTP API 发送消息回 QQ，支持文本、图片、文件、语音和视频
+- `remind` MCP 工具创建定时提醒，到期后自动发送文本消息（仅支持 C2C 和群聊）
+- 语音消息在未提供音频文件时使用 TTS（edge-tts）
+- 通知流向：webhook 事件 → MCP 通知 → CodeBuddy Code 处理 → 调用 reply/remind 工具 → HTTP API → QQ
+
+**消息路由：**
+- 内嵌模式：使用与主进程相同的 BotManager 和账号配置
+- 独立模式：所有回复使用单一的 `-account` 参数
 
 ---
 
@@ -139,6 +174,46 @@ OutboundHandler.SendText/SendImage/SendVoice/...
             │
             └─ POST to QQ Bot API
                 └─ If response has ref_idx → onMessageSent hook
+```
+
+### Channel Server 消息流（MCP）
+
+```
+QQ Bot Gateway (WebSocket)
+    │
+    ▼
+Gateway → EventHandler → WebhookDispatcher
+                                │
+                                ▼
+                    HTTP POST /webhook (async)
+                    to Channel Server (:8788)
+                                │
+                                ▼
+                        Channel Server
+                        ├─ 解析事件类型
+                        ├─ 提取内容
+                        ├─ appendAttachmentInfo()
+                        │  (image/voice/video/file metadata)
+                        └─ SendNotificationToAllClients()
+                                │ MCP notification
+                                ▼
+                        CodeBuddy Code (MCP client)
+                                │ AI 处理消息
+                                ▼
+                        CallTool("reply", chat_id, text)
+                                │ MCP tool invocation
+                                ▼
+                        Channel Server.handleReply()
+                                │
+                                ▼
+                        HTTP POST to qqbot API
+                        /api/v1/accounts/{acct}/{type}/{id}/messages
+                                │
+                                ▼
+                        qqbot OutboundHandler
+                                │
+                                ▼
+                        QQ Bot API → QQ Bot Gateway → User
 ```
 
 ---
@@ -383,6 +458,7 @@ checkDue() → collect due jobs → executeJob()
 | 包 | 版本 | 用途 |
 |----|------|------|
 | `github.com/gorilla/websocket` | v1.5.3 | 网关连接的 WebSocket 客户端 |
+| `github.com/mark3labs/mcp-go` | v0.46.0 | MCP（Model Context Protocol）服务器，用于 Channel Server |
 | `golang.org/x/sync` | v0.20.0 | `singleflight` 用于 token 请求去重 |
 | `gopkg.in/yaml.v3` | v3.0.1 | YAML 配置解析 |
 | `modernc.org/sqlite` | v1.47.0 | 纯 Go SQLite 驱动（无 CGO） |
@@ -393,6 +469,7 @@ checkDue() → collect due jobs → executeJob()
 |------|------|
 | `ffmpeg` | 音频处理（SILK 编解码、格式转换） |
 | `ffprobe` | 音频格式检测 |
+| `edge-tts` | 文本转语音合成（语音消息，`pip install edge-tts`） |
 
 除 ffmpeg/ffprobe 外，没有其他外部运行时依赖。二进制文件是完全自包含的。
 

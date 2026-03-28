@@ -223,7 +223,7 @@
 
 | 字段 | 类型 | 必填 | 描述 |
 |-------|------|----------|-------------|
-| `voice_base64` | string | 是 | Base64 编码的语音数据（SILK 格式）。 |
+| `voice_base64` | string | 是* | Base64 编码的语音数据（SILK 格式）。提供 `tts_text` 时可不填。 |
 | `tts_text` | string | 否 | 用于 TTS（文字转语音）合成的文本。提供后，系统将从此文本合成语音，而非使用 `voice_base64`。 |
 | `msg_id` | string | 否 | 用于被动回复的原始消息 ID。 |
 

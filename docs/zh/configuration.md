@@ -184,6 +184,159 @@ qqbot:
 - 事件转发为非阻塞操作——不会延迟网关消息处理。
 - Webhook 请求不添加认证头。
 
+### Webhook 载荷
+
+所有消息事件使用以下 JSON 结构转发：
+
+```json
+{
+  "account_id": "default",
+  "event_type": "C2C_MESSAGE_CREATE",
+  "timestamp": "2026-01-01T00:00:00Z",
+  "data": { ... }
+}
+```
+
+| 字段 | 描述 |
+|------|------|
+| `account_id` | 接收事件的账号 |
+| `event_type` | 事件类型：`C2C_MESSAGE_CREATE`、`GROUP_AT_MESSAGE_CREATE`、`GUILD_MESSAGE_CREATE` 或 `DIRECT_MESSAGE_CREATE` |
+| `timestamp` | 事件时间戳（ISO 8601） |
+| `data` | 原始事件载荷（因事件类型而异） |
+
+---
+
+## Channel Server（MCP）
+
+Channel Server 通过 MCP（Model Context Protocol）stdio 传输层将 QQ Bot 事件桥接到 CodeBuddy Code。它作为 MCP 服务器运行，在 `.mcp.json` 中配置，支持两种部署模式：
+
+### 部署模式
+
+**1. 内嵌模式**（推荐）
+
+作为主 `qqbot` 二进制的子命令运行，共享同一进程和配置。
+
+```json
+{
+  "mcpServers": {
+    "qq-channel": {
+      "command": "./qqbot",
+      "args": ["channel", "-config", "/path/to/config.yaml"]
+    }
+  }
+}
+```
+
+**2. 独立模式**
+
+作为单独的二进制文件运行（`cmd/qqbot-channel`），通过 HTTP API 连接 qqbot。
+
+| 参数 | 默认值 | 描述 |
+|------|--------|------|
+| `-webhook-port` | `8788` | 接收 qqbot webhook 事件的 HTTP 端口 |
+| `-qqbot-api` | `http://127.0.0.1:9090` | qqbot HTTP API 地址（用于发送回复） |
+| `-account` | `default` | 用于回复路由的默认 QQ Bot 账号 ID |
+
+```json
+{
+  "mcpServers": {
+    "qq-channel": {
+      "command": "./qqbot-channel",
+      "args": ["-qqbot-api", "http://127.0.0.1:9090", "-account", "default"]
+    }
+  }
+}
+```
+
+### 工作原理
+
+```
+QQ Bot Gateway → qqbot webhook 转发 → HTTP POST 到 Channel Server
+                                                  │
+                                                  ▼
+                                          Channel Server
+                                          ├─ 解析事件
+                                          ├─ 提取内容 + 附件
+                                          └─ 发送 MCP 通知
+                                                  │
+                                                  ▼
+                                        CodeBuddy Code（MCP 客户端）
+                                                  │
+                                                  ▼
+                                          AI 处理消息
+                                                  │
+                                                  ▼
+                                          调用 "reply" 工具
+                                                  │
+                                                  ▼
+                                        Channel Server → qqbot HTTP API
+                                                          │
+                                                          ▼
+                                                  QQ Bot Gateway
+```
+
+### MCP 能力
+
+Channel Server 声明了两个实验性能力：
+
+- `claude/channel` — 告知 CodeBuddy Code 此服务器提供消息通道
+- `claude/channel/permission` — 启用权限中继，允许将工具调用审批请求转发到 QQ 进行远程审批
+
+### 权限审批
+
+当 CodeBuddy Code 需要用户审批某个工具调用时，权限请求会通过 MCP 通知推送到 QQ。用户可以通过回复 `"yes <id>"` 或 `"no <id>"` 进行审批，审批结果会回传给 CodeBuddy Code。
+
+### MCP 工具
+
+| 工具 | 参数 | 描述 |
+|------|------|------|
+| `reply` | `chat_id`（必填）、`text`（必填）、`media_type`（可选）、`media_url`（可选） | 发送文本或富媒体回复到 QQ 会话 |
+| `remind` | `chat_id`（必填）、`text`（必填）、`schedule`（可选） | 设置定时提醒，到时间后发送文本消息。仅支持 c2c 和 group |
+| `cancel_reminder` | `job_id`（必填） | 取消已创建的定时提醒 |
+
+| 参数 | 必填 | 描述 |
+|------|------|------|
+| `chat_id` | 是 | 会话 ID（见下方格式表） |
+| `text` | 是 | 文本内容。语音消息时作为 TTS 输入文本。 |
+| `media_type` | 否 | 媒体类型：`image`、`file`、`voice`、`video` |
+| `media_url` | 否 | 媒体文件 URL（图片/文件/视频时必填；语音时可选） |
+
+`chat_id` 格式由会话类型决定：
+
+| 类型 | 格式 | 示例 |
+|------|------|------|
+| C2C（私聊） | `c2c:{user_openid}` | `c2c:o_abc123` |
+| 群聊 | `group:{group_openid}` | `group:grp_abc123` |
+| 频道消息 | `channel:{channel_id}` | `channel:12345` |
+| 频道私信 | `dm:{channel_id}` | `dm:12345` |
+
+### MCP 通知
+
+当新消息到达时，Channel Server 向 MCP 客户端（CodeBuddy Code）发送通知：
+
+- **方法：** `notifications/claude/channel`
+- **Payload：** `{ "content": "...", "meta": { "source": "qq", "sender": "...", "chat_id": "..." } }`
+
+### 设置步骤
+
+**内嵌模式：**
+
+1. 编译主程序：`go build -o qqbot ./cmd/qqbot`
+2. 在 `.mcp.json` 中配置内嵌子命令（见上文）。
+3. 内嵌模式读取与 qqbot 主进程相同的配置，包括 webhook 和 TTS 设置。
+
+**独立模式：**
+
+1. 编译 Channel Server：`go build -o qqbot-channel ./cmd/qqbot-channel`
+2. 配置 qqbot webhook 转发指向 Channel Server 的 webhook 端口：
+
+```yaml
+qqbot:
+  defaultWebhookUrl: "http://127.0.0.1:8788/webhook"
+```
+
+3. 项目根目录的 `.mcp.json` 文件将 Channel Server 注册到 CodeBuddy Code，无需额外配置。
+
 ---
 
 ## 校验

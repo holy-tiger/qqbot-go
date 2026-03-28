@@ -739,20 +739,27 @@ func TestWebhookIgnoresUnhandledEventTypes(t *testing.T) {
 | `internal/channel/channel.go` | 新增 | Channel Server 主逻辑（ChannelServer 结构体） |
 | `internal/channel/webhook.go` | 新增 | Webhook HTTP 服务（含事件白名单、graceful shutdown） |
 | `internal/channel/reply.go` | 新增 | reply 工具 |
-| `internal/channel/message.go` | 新增 | 消息格式转换（appendAttachmentInfo） |
+| `internal/channel/sender.go` | 新增 | Sender 接口与 httpSender 实现 |
+| `internal/channel/remind.go` | 新增 | remind / cancel_reminder 定时提醒工具 |
+| `internal/channel/message.go` | 新增 | 消息格式转换（appendAttachmentInfo、权限回复解析） |
 | `internal/channel/config.go` | 新增 | 配置定义 |
+| `internal/qqbot/channel.go` | 新增 | 内嵌模式入口（RunChannel） |
 | `internal/channel/webhook_test.go` | 新增 | Webhook 单元测试 |
 | `internal/channel/reply_test.go` | 新增 | reply 工具测试 |
+| `internal/channel/remind_test.go` | 新增 | remind 工具测试 |
 | `internal/channel/channel_test.go` | 新增 | Channel Server 边界测试 |
-| `cmd/qqbot-channel/main.go` | 新增 | CLI 入口 |
+| `internal/channel/integration_test.go` | 新增 | MCP 集成测试 |
+| `cmd/qqbot-channel/main.go` | 新增 | 独立模式 CLI 入口 |
 | `.mcp.json` | 新增 | MCP 服务器注册配置 |
 | `go.mod` / `go.sum` | 修改 | 新增 mcp-go 依赖 |
 | `docs/en/configuration.md` | 修改 | 补充 channel 配置说明 |
+| `docs/zh/configuration.md` | 修改 | 补充 channel 配置说明（中文） |
 
 ## 后续优化
 
-1. **内嵌模式**: 将 Channel Server 嵌入 qqbot 主进程，单二进制部署
-2. **富媒体回复**: 支持 reply 工具发送图片、文件等富媒体（调用 `/images`、`/files` API）
-3. **多账号支持**: 根据事件中的 `account_id` 自动路由到正确的 QQ 账号
-4. **权限中继**: 实现 `claude/channel/permission` 支持远程审批
+1. ~~**内嵌模式**~~: ~~将 Channel Server 嵌入 qqbot 主进程~~ ✅ 已实现（`qqbot channel` 子命令，`internal/qqbot/channel.go`）
+2. ~~**富媒体回复**~~: ~~支持 reply 工具发送图片、文件等富媒体~~ ✅ 已实现（`media_type` / `media_url` 参数）
+3. **多账号支持**: 根据事件中的 `account_id` 自动路由到正确的 QQ 账号（内嵌模式已支持；独立模式使用单一 `-account` 参数）
+4. ~~**权限中继**~~: ~~实现 `claude/channel/permission` 支持远程审批~~ ✅ 已实现（`registerPermissionHandler`、`ForwardMessage`）
 5. **打包为插件**: 按照插件规范打包，支持 `/plugin install` 安装
+6. **定时提醒工具**: ~~新增 remind / cancel_reminder MCP 工具~~ ✅ 已实现（`internal/channel/remind.go`）
