@@ -209,23 +209,42 @@
 
 #### POST `/api/v1/accounts/{id}/c2c/{openid}/voice`
 
-向 C2C 用户发送语音消息。
+向 C2C 用户发送语音消息。支持两种模式：**直接发送语音文件**（`voice_base64`）和 **文字转语音**（`tts_text`），二者提供其一即可。
 
-**请求：**
+> **TTS 模式说明**：使用 `tts_text` 时，服务端会自动调用内置的 edge-tts（微软 Edge TTS）将文本合成为语音并发送，调用方无需自行转换。默认语音为 `zh-CN-XiaoxiaoNeural`（晓晓）。使用 TTS 功能需确保服务器已安装 edge-tts（`pip install edge-tts`）。
+
+**方式一：TTS 文字转语音（推荐，最简单）**
 
 ```json
 {
-  "voice_base64": "SGVsbG8gV29ybGQ=",
-  "tts_text": "optional TTS text",
-  "msg_id": "optional_message_id"
+  "tts_text": "你好，这是一条语音消息"
+}
+```
+
+**方式二：直接发送语音数据**
+
+```json
+{
+  "voice_base64": "SGVsbG8gV29ybGQ="
+}
+```
+
+**方式三：被动回复（附带原始消息 ID）**
+
+```json
+{
+  "tts_text": "收到你的消息了",
+  "msg_id": "original_message_id"
 }
 ```
 
 | 字段 | 类型 | 必填 | 描述 |
 |-------|------|----------|-------------|
-| `voice_base64` | string | 是* | Base64 编码的语音数据（SILK 格式）。提供 `tts_text` 时可不填。 |
-| `tts_text` | string | 否 | 用于 TTS（文字转语音）合成的文本。提供后，系统将从此文本合成语音，而非使用 `voice_base64`。 |
+| `voice_base64` | string | 是* | Base64 编码的语音数据。当提供 `tts_text` 时可不填。 |
+| `tts_text` | string | 否 | 用于 TTS（文字转语音）合成的文本。提供后，系统将自动调用 edge-tts 从此文本合成语音并发送，无需调用方预处理。仅 C2C 私聊支持此字段。 |
 | `msg_id` | string | 否 | 用于被动回复的原始消息 ID。 |
+
+> **注意**：`voice_base64` 和 `tts_text` 至少提供其一。两者同时提供时，优先使用 `tts_text` 合成的语音。
 
 **响应：**
 
@@ -235,7 +254,29 @@
 
 #### POST `/api/v1/accounts/{id}/groups/{openid}/voice`
 
-向群组发送语音消息。请求/响应格式相同，但 `tts_text` 不会被转发（群组语音仅使用 `voice_base64`）。
+向群组发送语音消息。
+
+> **注意**：群组语音**不支持** `tts_text` 字段，只能通过 `voice_base64` 发送语音数据。
+
+**请求：**
+
+```json
+{
+  "voice_base64": "SGVsbG8gV29ybGQ=",
+  "msg_id": "optional_message_id"
+}
+```
+
+| 字段 | 类型 | 必填 | 描述 |
+|-------|------|----------|-------------|
+| `voice_base64` | string | 是 | Base64 编码的语音数据。 |
+| `msg_id` | string | 否 | 用于被动回复的原始消息 ID。 |
+
+**响应：**
+
+```json
+{"ok": true, "data": {"status": "sent"}}
+```
 
 ### 视频消息
 
