@@ -209,23 +209,42 @@ Send an image to a group. Same request/response format as C2C image messages.
 
 #### POST `/api/v1/accounts/{id}/c2c/{openid}/voice`
 
-Send a voice message to a C2C user.
+Send a voice message to a C2C user. Supports two modes: **send voice data directly** (`voice_base64`) and **text-to-speech** (`tts_text`). Provide one of the two.
 
-**Request:**
+> **TTS Mode**: When `tts_text` is provided, the server automatically calls the built-in edge-tts (Microsoft Edge TTS) to synthesize speech from text and send it. No preprocessing is required by the caller. The default voice is `zh-CN-XiaoxiaoNeural`. To use TTS, ensure edge-tts is installed on the server (`pip install edge-tts`).
+
+**Option 1: TTS text-to-speech (recommended, simplest)**
 
 ```json
 {
-  "voice_base64": "SGVsbG8gV29ybGQ=",
-  "tts_text": "optional TTS text",
-  "msg_id": "optional_message_id"
+  "tts_text": "Hello, this is a voice message"
+}
+```
+
+**Option 2: Send voice data directly**
+
+```json
+{
+  "voice_base64": "SGVsbG8gV29ybGQ="
+}
+```
+
+**Option 3: Passive reply (with original message ID)**
+
+```json
+{
+  "tts_text": "Got your message",
+  "msg_id": "original_message_id"
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `voice_base64` | string | Yes* | Base64-encoded voice data (SILK format). Required unless `tts_text` is provided. |
-| `tts_text` | string | No | Text for TTS (text-to-speech) synthesis via edge-tts. When provided, the system synthesizes speech from this text instead of using `voice_base64`. |
+| `voice_base64` | string | Yes* | Base64-encoded voice data. Not required when `tts_text` is provided. |
+| `tts_text` | string | No | Text for TTS (text-to-speech) synthesis. When provided, the system automatically calls edge-tts to synthesize speech from this text and sends it. No preprocessing needed by the caller. Only supported for C2C private messages. |
 | `msg_id` | string | No | Original message ID for passive reply. |
+
+> **Note**: At least one of `voice_base64` and `tts_text` must be provided. When both are provided, `tts_text` takes priority.
 
 **Response:**
 
@@ -235,7 +254,29 @@ Send a voice message to a C2C user.
 
 #### POST `/api/v1/accounts/{id}/groups/{openid}/voice`
 
-Send a voice message to a group. Same request/response format, but `tts_text` is not forwarded (group voice only uses `voice_base64`).
+Send a voice message to a group.
+
+> **Note**: Group voice messages **do not support** the `tts_text` field. Only `voice_base64` can be used to send voice data.
+
+**Request:**
+
+```json
+{
+  "voice_base64": "SGVsbG8gV29ybGQ=",
+  "msg_id": "optional_message_id"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `voice_base64` | string | Yes | Base64-encoded voice data. |
+| `msg_id` | string | No | Original message ID for passive reply. |
+
+**Response:**
+
+```json
+{"ok": true, "data": {"status": "sent"}}
+```
 
 ### Video Messages
 
