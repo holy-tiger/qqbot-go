@@ -25,6 +25,13 @@ Desktop.ini
 .env.*.local
 *.pem
 *.key
+*.crt
+*.p12
+*.jks
+*.db
+*.sqlite
+*.sqlite3
+*.credentials
 secrets/
 
 # Build output
