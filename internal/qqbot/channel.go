@@ -48,6 +48,18 @@ func (s *channelSender) Send(ctx context.Context, accountID, chatType, targetID,
 // RunChannel starts the embedded MCP channel server.
 // It blocks until the MCP stdio server exits (e.g., parent process closes stdin).
 func RunChannel(cfgPath string) error {
+	dataDir := "data"
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
+	}
+
+	// Acquire instance lock to prevent duplicate channel processes.
+	lock := NewProcessLock(dataDir + "/channel.pid")
+	if err := lock.Acquire(); err != nil {
+		return fmt.Errorf("lock: %w", err)
+	}
+	defer lock.Release()
+
 	cfg, err := loadAndValidateConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -67,11 +79,6 @@ func RunChannel(cfgPath string) error {
 	accountIDs := config.ListAccountIDs(cfg)
 	if len(accountIDs) == 0 {
 		return fmt.Errorf("no accounts configured")
-	}
-
-	dataDir := "data"
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return fmt.Errorf("create data directory: %w", err)
 	}
 
 	mgr, err := NewBotManager(dataDir)

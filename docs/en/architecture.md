@@ -93,6 +93,8 @@ Bridges QQ Bot events to CodeBuddy Code via the MCP (Model Context Protocol) std
 - **Embedded mode** — runs as a `qqbot channel` subcommand, sharing the same process and config
 - **Standalone mode** — runs as a separate binary (`cmd/qqbot-channel`)
 
+**Instance locking (embedded mode):** When running in embedded mode, a PID file lock (`data/channel.pid`) prevents duplicate instances from competing for the same QQ WebSocket connection. If a new instance starts while another is running, it sends SIGTERM to the existing holder, waits for it to shut down gracefully, then takes over the lock. Stale locks from crashed processes are automatically detected and cleaned up.
+
 In both modes, the channel server runs as two concurrent components:
 
 1. **MCP stdio server** — communicates with CodeBuddy Code using JSON-RPC over stdin/stdout
@@ -477,23 +479,25 @@ No other external runtime dependencies. The binary is fully self-contained excep
 ### Startup Sequence
 
 ```
-1. Parse CLI flags (-config, -health, -api)
-2. Load and validate YAML config
-3. Create data/ directory
-4. Open SQLite database (schema + migration)
-5. For each configured account:
+1. Acquire PID file lock (data/channel.pid); takeover existing holder via SIGTERM if needed
+2. Parse CLI flags (-config, -health, -api)
+3. Load and validate YAML config
+4. Create data/ directory
+5. Open SQLite database (schema + migration)
+6. For each configured account:
    a. ResolveAccount() (apply defaults, resolve secrets)
    b. Skip if disabled
    c. Create APIClient, stores, Gateway, OutboundHandler, etc.
    d. Register webhook URL if configured
-6. Start webhook dispatcher
-7. Start BotManager:
+7. Start webhook dispatcher
+8. Start BotManager:
    a. Client.Init() for each account (token refresh)
    b. Scheduler.Start() for each account (load persisted reminders)
    c. Gateway.Connect() for each account (background goroutines)
-8. Start API server (if -api specified)
-9. Start health server (if -health specified)
-10. Wait for SIGINT/SIGTERM
+9. Start API server (if -api specified)
+10. Start health server (if -health specified)
+11. Wait for SIGINT/SIGTERM
+12. Release PID file lock on exit
 ```
 
 ### Shutdown Sequence

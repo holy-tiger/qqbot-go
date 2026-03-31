@@ -93,6 +93,8 @@ httpapi.APIServer → BotAPI interface ← botAPIAdapter wraps *BotManager
 - **内嵌模式** — 作为 `qqbot channel` 子命令运行，共享同一进程和配置
 - **独立模式** — 作为单独的二进制文件运行（`cmd/qqbot-channel`）
 
+**实例锁（内嵌模式）：** 内嵌模式下，PID 文件锁（`data/channel.pid`）防止重复实例抢占同一 QQ WebSocket 连接。新实例启动时，若已有实例运行，会向旧实例发送 SIGTERM，等待其优雅退出后接管锁。已崩溃进程的过期锁会被自动检测并清理。
+
 两种模式下，Channel Server 运行两个并发组件：
 
 1. **MCP stdio 服务器** — 通过 stdin/stdout 上的 JSON-RPC 与 CodeBuddy Code 通信
@@ -478,23 +480,25 @@ checkDue() → collect due jobs → executeJob()
 ### 启动流程
 
 ```
-1. Parse CLI flags (-config, -health, -api)
-2. Load and validate YAML config
-3. Create data/ directory
-4. Open SQLite database (schema + migration)
-5. For each configured account:
+1. 获取 PID 文件锁 (data/channel.pid)；如已有运行实例则通过 SIGTERM 接管
+2. Parse CLI flags (-config, -health, -api)
+3. Load and validate YAML config
+4. Create data/ directory
+5. Open SQLite database (schema + migration)
+6. For each configured account:
    a. ResolveAccount() (apply defaults, resolve secrets)
    b. Skip if disabled
    c. Create APIClient, stores, Gateway, OutboundHandler, etc.
    d. Register webhook URL if configured
-6. Start webhook dispatcher
-7. Start BotManager:
+7. Start webhook dispatcher
+8. Start BotManager:
    a. Client.Init() for each account (token refresh)
    b. Scheduler.Start() for each account (load persisted reminders)
    c. Gateway.Connect() for each account (background goroutines)
-8. Start API server (if -api specified)
-9. Start health server (if -health specified)
-10. Wait for SIGINT/SIGTERM
+9. Start API server (if -api specified)
+10. Start health server (if -health specified)
+11. Wait for SIGINT/SIGTERM
+12. Release PID file lock on exit
 ```
 
 ### 关闭流程

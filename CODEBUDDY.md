@@ -82,5 +82,6 @@ GitHub Actions: `go vet` -> `go test -race` -> `go build` on Go 1.24 and 1.25, t
 - API server endpoints: `/api/v1/` (disabled when `-api` is empty)
 - No CGO required -- SILK encoding uses ffmpeg via `os/exec`
 - Channel server supports two modes: embedded (`qqbot channel` subcommand) and standalone (`qqbot-channel` binary)
+- Channel server uses PID file lock (`data/channel.pid`) to prevent duplicate instances; new instances take over via SIGTERM
 - Channel server receives QQ events via HTTP webhook and delivers them as MCP notifications
 - Channel server uses `claude/channel` experimental capability for CodeBuddy Code integration
