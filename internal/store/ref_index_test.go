@@ -92,12 +92,32 @@ func TestRefIndexStore_TTLExpiry(t *testing.T) {
 }
 
 func TestRefIndexStore_EvictionAtMax(t *testing.T) {
-	s := NewRefIndexStore(openTestDB(t))
+	db := openTestDB(t)
+	s := NewRefIndexStore(db)
 	defer s.Close()
 
-	for i := 0; i < 50100; i++ {
-		s.Set("REFIDX_"+fmt.Sprintf("%d", i), RefIndexEntry{Content: "msg", SenderID: "u", Timestamp: int64(i)})
+	// Bulk-insert 50100 entries via transaction to avoid 150k+ individual SQL calls.
+	// The Set method runs INSERT + DELETE expired + DELETE over-limit per call, which
+	// is too slow under modernc.org/sqlite on CI.
+	tx, err := db.SQLDB().Begin()
+	if err != nil {
+		t.Fatal(err)
 	}
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO ref_index
+		(ref_key, content, sender_id, sender_name, timestamp, is_bot, attachments, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UnixMilli()
+	for i := 0; i < 50100; i++ {
+		stmt.Exec(fmt.Sprintf("REFIDX_%d", i), "msg", "u", "", i, false, "[]", now)
+	}
+	stmt.Close()
+	tx.Commit()
+
+	// Trigger eviction by calling Set once.
+	s.Set("REFIDX_TRIGGER", RefIndexEntry{Content: "msg", SenderID: "u", Timestamp: int64(99999)})
 
 	size, _, _, _ := s.Stats()
 	if size > 50000 {
