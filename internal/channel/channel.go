@@ -230,7 +230,7 @@ func (cs *ChannelServer) registerReplyTool() {
 			mcp.Description("要发送的文本内容。纯文本消息时为消息正文；图片/视频消息时为标题说明；voice 时作为 TTS 文本，服务端会自动用 edge-tts 将其转为语音发送，无需本端处理"),
 		),
 		mcp.WithString("media_type",
-			mcp.Description("媒体类型，可选: image (图片), file (文件), voice (语音), video (视频)。不设置则发送纯文本。media_type=image/file/video/voice 仅支持 c2c 和 group 会话，channel/dm 只能发纯文本"),
+			mcp.Description("媒体类型，可选: image (图片), file (文件), voice (语音), video (视频)。不设置则发送纯文本。image/file/video 时需传 media_url；voice 时可省略 media_url（将 text 作为 TTS 内容）；channel/dm 只能发纯文本"),
 		),
 		mcp.WithString("media_url",
 			mcp.Description("媒体文件的 URL。media_type 为 image/file/video 时必填。media_type 为 voice 时可选：不传则服务端自动将 text 转为语音发送(TTS)；传入时作为 voice_base64 编码的音频数据"),
