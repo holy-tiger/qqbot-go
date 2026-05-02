@@ -89,6 +89,11 @@ func (cs *ChannelServer) handleRemind(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultError(fmt.Sprintf("解析响应失败: %v", err)), nil
 	}
 
+	if result.Data == nil {
+		log.Printf("[channel] remind response missing data field")
+		return mcp.NewToolResultError("创建提醒失败: 响应缺少数据"), nil
+	}
+
 	log.Printf("[channel] reminded %s (job_id=%s, schedule=%s)", chatID, result.Data.JobID, schedule)
 	return mcp.NewToolResultText(fmt.Sprintf("reminded (job_id=%s)", result.Data.JobID)), nil
 }
