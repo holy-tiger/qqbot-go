@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "qq-channel": {
-      "command": "./qqbot",
-      "args": ["channel", "-config", "/workspace/configs/config.yaml"]
-    }
-  }
-}
