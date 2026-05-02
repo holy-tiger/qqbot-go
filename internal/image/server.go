@@ -1,6 +1,7 @@
 package image
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -31,13 +32,15 @@ type imageEntry struct {
 
 // ImageServer serves images from a local directory over HTTP.
 type ImageServer struct {
-	server  *http.Server
-	dir     string
-	port    int
-	index   map[string]*imageEntry
-	mu      sync.RWMutex
-	ttl     time.Duration
-	running bool
+	server        *http.Server
+	dir           string
+	port          int
+	index         map[string]*imageEntry
+	mu            sync.RWMutex
+	ttl           time.Duration
+	running       bool
+	cleanupCancel context.CancelFunc // P2-12: cancel cleanup goroutine
+	cleanupDone   chan struct{}
 }
 
 // imagePathRegex matches /images/{uuid}.{ext}
@@ -52,12 +55,15 @@ func NewImageServer(cfg ImageServerConfig) *ImageServer {
 	if cfg.Dir == "" {
 		cfg.Dir = "./qqbot-images"
 	}
-	os.MkdirAll(cfg.Dir, 0755)
+	if err := os.MkdirAll(cfg.Dir, 0755); err != nil {
+		return nil
+	}
 	return &ImageServer{
-		dir:   cfg.Dir,
-		port:  cfg.Port,
-		index: make(map[string]*imageEntry),
-		ttl:   ttl,
+		dir:         cfg.Dir,
+		port:        cfg.Port,
+		index:       make(map[string]*imageEntry),
+		ttl:         ttl,
+		cleanupDone: make(chan struct{}),
 	}
 }
 
@@ -70,7 +76,9 @@ func (s *ImageServer) Start() error {
 		return nil
 	}
 
-	os.MkdirAll(s.dir, 0755)
+	if err := os.MkdirAll(s.dir, 0755); err != nil {
+		return fmt.Errorf("create image directory: %w", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRequest)
@@ -86,6 +94,10 @@ func (s *ImageServer) Start() error {
 	s.port = addr.Port
 
 	s.running = true
+	// P2-12: start periodic cleanup
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	s.cleanupCancel = cleanupCancel
+	go s.cleanupLoop(cleanupCtx)
 	go func() {
 		s.server.Serve(listener)
 	}()
@@ -100,8 +112,14 @@ func (s *ImageServer) Stop() error {
 	s.running = false
 	s.mu.Unlock()
 
-	if wasRunning && s.server != nil {
-		return s.server.Close()
+	if wasRunning {
+		if s.cleanupCancel != nil {
+			s.cleanupCancel()
+		}
+		<-s.cleanupDone // wait for cleanupLoop to exit
+		if s.server != nil {
+			return s.server.Close()
+		}
 	}
 	return nil
 }
@@ -174,6 +192,22 @@ func (s *ImageServer) cleanupExpired() {
 	}
 }
 
+// P2-12: cleanupLoop runs periodic cleanup of expired images.
+func (s *ImageServer) cleanupLoop(ctx context.Context) {
+	defer close(s.cleanupDone)
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.cleanupExpired()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 func (s *ImageServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// CORS headers
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -216,8 +250,16 @@ func (s *ImageServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Path safety check
 	filePath := filepath.Join(s.dir, entry.filename)
-	absDir, _ := filepath.Abs(s.dir)
-	absFile, _ := filepath.Abs(filePath)
+	absDir, err := filepath.Abs(s.dir)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	absFile, err := filepath.Abs(filePath)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
 	if !strings.HasPrefix(absFile, absDir+string(filepath.Separator)) && absFile != absDir {
 		w.WriteHeader(403)
 		return
