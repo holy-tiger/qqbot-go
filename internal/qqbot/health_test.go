@@ -39,8 +39,8 @@ func TestHealthResponse_Basic(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if resp.Status != "ok" {
-		t.Errorf("expected status 'ok', got %s", resp.Status)
+	if resp.Status != "unhealthy" {
+		t.Errorf("expected status 'unhealthy' (account not connected), got %s", resp.Status)
 	}
 	if resp.Version != "0.1.0" {
 		t.Errorf("expected version '0.1.0', got %s", resp.Version)

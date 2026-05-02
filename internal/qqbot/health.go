@@ -100,11 +100,28 @@ func (hs *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if hs.manager != nil {
 		statuses := hs.manager.GetAllStatuses()
 		resp.Accounts = make([]AccountHealth, len(statuses))
+		anyConnected := false
+		allConnected := len(statuses) == 0 // vacuously true if no accounts
 		for i, s := range statuses {
 			resp.Accounts[i] = AccountHealth{
 				ID:        s.ID,
 				Connected: s.Connected,
 				Error:     s.Error,
+			}
+			if s.Connected {
+				anyConnected = true
+			} else {
+				allConnected = false
+			}
+		}
+		// P1-7: reflect account connectivity in top-level status
+		if len(statuses) > 0 {
+			if allConnected {
+				resp.Status = "ok"
+			} else if anyConnected {
+				resp.Status = "degraded"
+			} else {
+				resp.Status = "unhealthy"
 			}
 		}
 	}
