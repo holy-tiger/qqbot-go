@@ -54,7 +54,8 @@ internal/
   store/            SQLite persistent storage (known users, ref index, sessions)
   types/            Core domain types (events, configs, payloads)
   utils/            Utilities (file validation, media tag normalization, payload parsing)
-.mcp.json          MCP server registration for CodeBuddy Code
+plugin/
+  scripts/         Setup and utility scripts (MCP setup, etc.)
 ```
 
 ## Coding Conventions
@@ -85,3 +86,5 @@ GitHub Actions: `go vet` -> `go test -race` -> `go build` on Go 1.25, triggered 
 - Channel server uses PID file lock (`data/channel.pid`) to prevent duplicate instances; new instances take over via SIGTERM
 - Channel server receives QQ events via HTTP webhook and delivers them as MCP notifications
 - Channel server uses `claude/channel` experimental capability for CodeBuddy Code integration
+- MCP setup: `plugin/scripts/setup-mcp.sh` — one-click installation script for CodeBuddy Code and Codex
+- `.mcp.json` is generated per-project by the setup script (not checked into the repo)
