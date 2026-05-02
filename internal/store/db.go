@@ -1,11 +1,13 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	// Import the pure-Go SQLite driver.
 	_ "modernc.org/sqlite"
@@ -62,6 +64,14 @@ func (d *DB) SQLDB() *sql.DB {
 // Dir returns the data directory path.
 func (d *DB) Dir() string {
 	return d.dir
+}
+
+// P2-11: defaultTimeout is the context timeout for store operations that lack an explicit context.
+const defaultStoreTimeout = 5 * time.Second
+
+// Ctx returns a context with the default store timeout.
+func (d *DB) Ctx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), defaultStoreTimeout)
 }
 
 // OpenTestDB creates a test SQLite database in t.TempDir().

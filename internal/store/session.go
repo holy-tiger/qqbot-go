@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"sync"
@@ -74,7 +75,10 @@ func (s *SessionStore) Save(state SessionState) {
 	now := time.Now().UnixMilli()
 	state.SavedAt = now
 
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO sessions
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO sessions
 		(account_id, session_id, last_seq, last_connected_at, intent_level_index, app_id, saved_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		state.AccountID, state.SessionID, state.LastSeq,
@@ -93,11 +97,15 @@ func (s *SessionStore) Clear(accountID string) {
 }
 
 // UpdateLastSeq updates the last sequence number for an account.
+// P2-11: uses context with timeout to avoid indefinite blocking.
 func (s *SessionStore) UpdateLastSeq(accountID string, lastSeq int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	res, err := s.db.Exec(`UPDATE sessions SET last_seq = ? WHERE account_id = ? AND session_id != ''`,
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_seq = ? WHERE account_id = ? AND session_id != ''`,
 		lastSeq, accountID)
 	if err != nil || res == nil {
 		return
