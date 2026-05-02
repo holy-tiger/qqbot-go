@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,8 +12,9 @@ import (
 )
 
 const (
-	webhookMaxRetries = 3
-	webhookTimeout    = 10 * time.Second
+	webhookMaxRetries  = 3
+	webhookTimeout     = 10 * time.Second
+	webhookMaxInFlight = 16 // P2-14: max concurrent webhook deliveries
 )
 
 // WebhookEvent is the JSON payload sent to the webhook URL.
@@ -28,6 +30,7 @@ type WebhookDispatcher struct {
 	urls    map[string]string // accountID -> webhookURL
 	mu      sync.RWMutex
 	client  *http.Client
+	sem     chan struct{} // P2-14: semaphore to limit concurrent goroutines
 }
 
 // NewWebhookDispatcher creates a new WebhookDispatcher.
@@ -37,6 +40,7 @@ func NewWebhookDispatcher() *WebhookDispatcher {
 		client: &http.Client{
 			Timeout: webhookTimeout,
 		},
+		sem: make(chan struct{}, webhookMaxInFlight),
 	}
 }
 
@@ -49,6 +53,7 @@ func (d *WebhookDispatcher) SetURL(accountID, url string) {
 
 // Dispatch sends the event payload to the configured webhook URL asynchronously.
 // If no URL is configured for the account, this is a no-op.
+// P2-14: bounded concurrency via semaphore.
 func (d *WebhookDispatcher) Dispatch(accountID, eventType string, payload []byte) {
 	d.mu.RLock()
 	url, ok := d.urls[accountID]
@@ -64,7 +69,16 @@ func (d *WebhookDispatcher) Dispatch(accountID, eventType string, payload []byte
 		Data:      json.RawMessage(payload),
 	}
 
-	go d.send(url, event)
+	select {
+	case d.sem <- struct{}{}:
+		go func() {
+			defer func() { <-d.sem }()
+			d.send(url, event)
+		}()
+	default:
+		// P2-14: drop event if too many in-flight deliveries
+		log.Printf("[webhook] dropping %s for %s: too many in-flight deliveries", event.EventType, url)
+	}
 }
 
 // send delivers the event with bounded retry.
@@ -75,10 +89,18 @@ func (d *WebhookDispatcher) send(url string, event WebhookEvent) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), webhookTimeout*time.Duration(webhookMaxRetries))
+	defer cancel()
+
 	var lastErr error
 	for attempt := 0; attempt < webhookMaxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(1<<uint(attempt-1)) * time.Second)
+			select {
+			case <-ctx.Done():
+				log.Printf("[webhook] context cancelled during retry for %s to %s", event.EventType, url)
+				return
+			case <-time.After(time.Duration(1<<uint(attempt-1)) * time.Second):
+			}
 		}
 
 		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
