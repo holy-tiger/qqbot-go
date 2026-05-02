@@ -5,7 +5,7 @@
 QQ Bot HTTP API Service — a standalone Go service that exposes QQ Bot messaging capabilities via RESTful HTTP API. Supports C2C/group/guild messaging, rich media (image/voice/video/file), proactive scheduling, broadcast, webhook event forwarding, multi-account isolation, image hosting, and MCP Channel Server integration with CodeBuddy Code.
 
 - **Module:** `github.com/openclaw/qqbot`
-- **Go version:** 1.25 (CI also tests 1.24)
+- **Go version:** 1.25
 - **Entry points:** `cmd/qqbot/main.go` (API server + `channel` subcommand), `cmd/qqbot-channel/main.go` (standalone MCP channel server)
 
 ## Build & Run
@@ -72,7 +72,7 @@ internal/
 
 ## CI
 
-GitHub Actions: `go vet` -> `go test -race` -> `go build` on Go 1.24 and 1.25, triggered on push/PR to `main`/`master`.
+GitHub Actions: `go vet` -> `go test -race` -> `go build` on Go 1.25, triggered on push/PR to `main`/`master`.
 
 ## Important Notes
 - 执行前，先检查是否有合适的subagent可以完成任务，指派给subagent去执行。

@@ -233,7 +233,7 @@ func (cs *ChannelServer) registerReplyTool() {
 			mcp.Description("媒体类型，可选: image (图片), file (文件), voice (语音), video (视频)。不设置则发送纯文本。image/file/video 时需传 media_url；voice 时可省略 media_url（将 text 作为 TTS 内容）；channel/dm 只能发纯文本"),
 		),
 		mcp.WithString("media_url",
-			mcp.Description("媒体文件的 URL。media_type 为 image/file/video 时必填。media_type 为 voice 时可选：不传则服务端自动将 text 转为语音发送(TTS)；传入时作为 voice_base64 编码的音频数据"),
+			mcp.Description("媒体文件的 URL。media_type 为 image/file/video 时必填。media_type 为 voice 时可选：不传则服务端自动将 text 转为语音发送(TTS)；传入时此字段不是 URL，而是 base64 编码的音频原始数据"),
 		),
 	)
 	cs.mcp.AddTool(tool, cs.handleReply)
