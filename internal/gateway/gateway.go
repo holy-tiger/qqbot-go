@@ -33,6 +33,12 @@ type SessionData struct {
 	AppID            string
 }
 
+// gatewayHTTPTimeout is the timeout for gateway URL fetch requests.
+const gatewayHTTPTimeout = 30 * time.Second
+
+// heartbeatAckFactor is the multiplier on heartbeat interval for ACK timeout.
+const heartbeatAckFactor = 2
+
 // Gateway manages the WebSocket connection to the QQ Bot gateway.
 type Gateway struct {
 	accountID    string
@@ -41,38 +47,44 @@ type Gateway struct {
 	token        string // pre-set token, used by getGatewayURL
 	conn         *websocket.Conn
 	mu           sync.Mutex
-	intentIndex  int
 	sessionID    string
 	lastSeq      int
+	intentIndex  int // P0-1: now always accessed under muConn
 	queue        *MessageQueue
 	reconnect    ReconnectConfig
 	eventHandler EventHandler
 	connected    bool
+	didConnect   bool // P0-3: set true on READY/RESUMED, checked by connectLoop
 	muConn       sync.Mutex
 	cancel       context.CancelFunc
 	sessionStore SessionPersister
 	appID        string
+	httpClient   *http.Client // P0-4: dedicated client with timeout
 
 	// Heartbeat
-	heartbeatTimer *time.Timer
-	heartbeatAck   chan struct{}
+	heartbeatTimer  *time.Timer
+	heartbeatAck    chan struct{}
+	heartbeatTimeout *time.Timer // P1-6: ACK timeout timer
 
 	// Synchronization for Connect returning after READY
-	readyCh chan struct{} // closed when READY or RESUMED is received
+	readyCh   chan struct{} // closed when READY or RESUMED is received
+	readyOnce *sync.Once   // protects readyCh from double-close
 }
 
 // NewGateway creates a new Gateway instance.
 func NewGateway(accountID string, client *api.APIClient, handler EventHandler) *Gateway {
 	return &Gateway{
-		accountID:    accountID,
-		client:       client,
-		apiBase:      api.APIBase,
-		intentIndex:  0,
-		queue:        NewMessageQueue(defaultMaxConcurrentUsers, defaultPerUserQueueSize),
-		reconnect:    DefaultReconnectConfig,
+		accountID:   accountID,
+		client:      client,
+		apiBase:     api.APIBase,
+		intentIndex: 0,
+		queue:       NewMessageQueue(defaultMaxConcurrentUsers, defaultPerUserQueueSize),
+		reconnect:   DefaultReconnectConfig,
 		eventHandler: handler,
 		heartbeatAck: make(chan struct{}, 1),
-		readyCh:      make(chan struct{}),
+		readyCh:     make(chan struct{}),
+		readyOnce:   &sync.Once{},
+		httpClient:  &http.Client{Timeout: gatewayHTTPTimeout}, // P0-4
 	}
 }
 
@@ -94,9 +106,10 @@ func (g *Gateway) Connect(ctx context.Context) error {
 	ctx, g.cancel = context.WithCancel(ctx)
 	g.queue.Start()
 
-	// Reset readyCh
+	// Reset readyCh and readyOnce
 	g.mu.Lock()
 	g.readyCh = make(chan struct{})
+	g.readyOnce = &sync.Once{}
 	g.mu.Unlock()
 
 	// Load persisted session state
@@ -106,7 +119,7 @@ func (g *Gateway) Connect(ctx context.Context) error {
 			g.muConn.Lock()
 			g.sessionID = state.SessionID
 			g.lastSeq = state.LastSeq
-			g.intentIndex = state.IntentLevelIndex
+			g.intentIndex = state.IntentLevelIndex // P0-1: under muConn
 			g.muConn.Unlock()
 			log.Printf("[gateway:%s] restored session (seq=%d, intent=%d)", g.accountID, g.lastSeq, g.intentIndex)
 		}
@@ -126,6 +139,7 @@ func (g *Gateway) Connect(ctx context.Context) error {
 // connectLoop implements the main connect-reconnect loop.
 func (g *Gateway) connectLoop(ctx context.Context) {
 	var reconnectAttempts int
+	var disconnectTimes []time.Time // P1-9: track disconnect times for ShouldQuickStop
 
 	for {
 		select {
@@ -139,20 +153,46 @@ func (g *Gateway) connectLoop(ctx context.Context) {
 			return
 		}
 
+		// P1-9: check for rapid disconnects
+		if g.reconnect.ShouldQuickStop(disconnectTimes) {
+			log.Printf("[gateway:%s] quick disconnect detected, stopping reconnect", g.accountID)
+			return
+		}
+
 		err := g.connectOnce(ctx)
 		if err != nil {
 			log.Printf("[gateway:%s] connection attempt failed: %v", g.accountID, err)
 		}
 
+		// P0-3: if we successfully connected before disconnecting, reset the counter
+		g.muConn.Lock()
+		wasConnected := g.didConnect
+		if wasConnected {
+			reconnectAttempts = 0
+			disconnectTimes = nil
+		}
+		g.didConnect = false
+		g.muConn.Unlock()
+
+		if wasConnected {
+			disconnectTimes = append(disconnectTimes, time.Now())
+		}
+
 		// Disconnected (or intent fallback needed)
 		g.setConnected(false)
 		g.stopHeartbeat()
+		g.stopHeartbeatTimeout() // P1-6
+
+		// P1-9: use RateLimitDelay for rate-limited reconnects
+		delay := g.reconnect.GetDelay(reconnectAttempts)
 
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(g.reconnect.GetDelay(reconnectAttempts)):
-			reconnectAttempts++
+		case <-time.After(delay):
+			if !wasConnected {
+				reconnectAttempts++
+			}
 		}
 	}
 }
@@ -164,14 +204,23 @@ func (g *Gateway) connectOnce(ctx context.Context) error {
 		return fmt.Errorf("get gateway URL: %w", err)
 	}
 
-	for levelIdx := g.intentIndex; levelIdx < len(types.DefaultIntentLevels); levelIdx++ {
+	// P0-1: read intentIndex under muConn
+	g.muConn.Lock()
+	startIdx := g.intentIndex
+	g.muConn.Unlock()
+
+	for levelIdx := startIdx; levelIdx < len(types.DefaultIntentLevels); levelIdx++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
+		// P0-1: write intentIndex under muConn
+		g.muConn.Lock()
 		g.intentIndex = levelIdx
+		g.muConn.Unlock()
+
 		err := g.tryConnect(ctx, wsURL, token, levelIdx)
 		if err == nil {
 			return nil // connected successfully
@@ -191,7 +240,11 @@ func (g *Gateway) tryConnect(ctx context.Context, wsURL, token string, levelIdx 
 		return fmt.Errorf("websocket dial: %w", err)
 	}
 
+	// P0-2: close old connection before assigning new one
 	g.muConn.Lock()
+	if g.conn != nil {
+		g.conn.Close()
+	}
 	g.conn = conn
 	g.muConn.Unlock()
 
@@ -219,7 +272,12 @@ func (g *Gateway) tryConnect(ctx context.Context, wsURL, token string, levelIdx 
 	heartbeatInterval := time.Duration(helloData.HeartbeatInterval) * time.Millisecond
 
 	// Send Identify or Resume
-	if g.sessionID != "" {
+	g.muConn.Lock()
+	sessionID := g.sessionID
+	lastSeq := g.lastSeq
+	g.muConn.Unlock()
+
+	if sessionID != "" {
 		resumeData := struct {
 			Op int           `json:"op"`
 			D  ResumeParams `json:"d"`
@@ -227,8 +285,8 @@ func (g *Gateway) tryConnect(ctx context.Context, wsURL, token string, levelIdx 
 			Op: OpResume,
 			D: ResumeParams{
 				Token:     "QQBot " + token,
-				SessionID: g.sessionID,
-				Seq:       g.lastSeq,
+				SessionID: sessionID,
+				Seq:       lastSeq,
 			},
 		}
 		if err := conn.WriteJSON(resumeData); err != nil {
@@ -252,8 +310,9 @@ func (g *Gateway) tryConnect(ctx context.Context, wsURL, token string, levelIdx 
 		}
 	}
 
-	// Start heartbeat
+	// Start heartbeat with ACK timeout monitoring
 	g.stopHeartbeat()
+	g.stopHeartbeatTimeout()
 	g.heartbeatAck = make(chan struct{}, 1)
 	g.startHeartbeat(heartbeatInterval)
 
@@ -296,8 +355,11 @@ func (g *Gateway) readLoop(ctx context.Context) error {
 		g.handlePayload(ctx, &payload)
 
 		// Persist seq periodically (every message is cheap for SQLite)
+		g.muConn.Lock()
+		seq := g.lastSeq
+		g.muConn.Unlock()
 		if g.sessionStore != nil {
-			g.sessionStore.UpdateLastSeq(g.accountID, g.lastSeq)
+			g.sessionStore.UpdateLastSeq(g.accountID, seq)
 		}
 	}
 }
@@ -309,6 +371,7 @@ func (g *Gateway) handlePayload(ctx context.Context, payload *types.WSPayload) {
 		g.handleDispatch(payload)
 
 	case OpHeartbeatACK:
+		g.stopHeartbeatTimeout() // P1-6: ACK received, cancel timeout
 		select {
 		case g.heartbeatAck <- struct{}{}:
 		default:
@@ -327,13 +390,14 @@ func (g *Gateway) handlePayload(ctx context.Context, payload *types.WSPayload) {
 			json.Unmarshal(payload.Data, &canResume)
 		}
 		if !canResume {
+			// P0-1: write intentIndex under muConn
 			g.muConn.Lock()
 			g.sessionID = ""
 			g.lastSeq = 0
-			g.muConn.Unlock()
 			if g.intentIndex < len(types.DefaultIntentLevels)-1 {
 				g.intentIndex++
 			}
+			g.muConn.Unlock()
 		}
 		g.setConnected(false)
 		conn := g.getConn()
@@ -359,19 +423,26 @@ func (g *Gateway) handleDispatch(payload *types.WSPayload) {
 			g.muConn.Lock()
 			g.sessionID = readyData.SessionID
 			g.connected = true
+			g.didConnect = true // P0-3: mark that we had a successful connection
 			g.muConn.Unlock()
 		}
 		g.saveSession()
 		g.signalReady()
 
 	case EventResumed:
-		g.setConnected(true)
+		g.muConn.Lock()
+		g.connected = true
+		g.didConnect = true // P0-3: mark that we had a successful connection
+		g.muConn.Unlock()
 		g.signalReady()
 
 	case EventC2CMessage, EventGroupMessage, EventGuildMessage, EventGuildDM:
 		if g.eventHandler != nil {
+			g.muConn.Lock()
+			seq := g.lastSeq
+			g.muConn.Unlock()
 			g.queue.Enqueue(&MessageItem{
-				ID:        fmt.Sprintf("event-%s-%d", eventName, g.lastSeq),
+				ID:        fmt.Sprintf("event-%s-%d", eventName, seq),
 				AccountID: g.accountID,
 				EventType: eventName,
 				Payload:   payload.Data,
@@ -386,14 +457,12 @@ func (g *Gateway) handleDispatch(payload *types.WSPayload) {
 
 func (g *Gateway) signalReady() {
 	g.mu.Lock()
+	once := g.readyOnce
 	ch := g.readyCh
 	g.mu.Unlock()
-	select {
-	case <-ch:
-		// already closed
-	default:
+	once.Do(func() {
 		close(ch)
-	}
+	})
 }
 
 // startHeartbeat sends periodic heartbeats.
@@ -417,13 +486,40 @@ func (g *Gateway) sendHeartbeat(interval time.Duration) {
 
 	data := map[string]interface{}{"op": OpHeartbeat, "d": seq}
 	if err := conn.WriteJSON(data); err != nil {
+		log.Printf("[gateway:%s] heartbeat write failed: %v", g.accountID, err)
 		return
 	}
+
+	// P1-6: start ACK timeout — if no ACK within 2x interval, force disconnect
+	g.startHeartbeatTimeout(interval * heartbeatAckFactor)
 
 	g.mu.Lock()
 	g.heartbeatTimer = time.AfterFunc(interval, func() {
 		g.sendHeartbeat(interval)
 	})
+	g.mu.Unlock()
+}
+
+// startHeartbeatTimeout starts a timer that forces disconnect if no ACK is received.
+func (g *Gateway) startHeartbeatTimeout(timeout time.Duration) {
+	g.mu.Lock()
+	g.heartbeatTimeout = time.AfterFunc(timeout, func() {
+		log.Printf("[gateway:%s] heartbeat ACK timeout, forcing disconnect", g.accountID)
+		conn := g.getConn()
+		if conn != nil {
+			conn.Close()
+		}
+	})
+	g.mu.Unlock()
+}
+
+// stopHeartbeatTimeout stops the heartbeat ACK timeout timer.
+func (g *Gateway) stopHeartbeatTimeout() {
+	g.mu.Lock()
+	if g.heartbeatTimeout != nil {
+		g.heartbeatTimeout.Stop()
+		g.heartbeatTimeout = nil
+	}
 	g.mu.Unlock()
 }
 
@@ -440,6 +536,7 @@ func (g *Gateway) stopHeartbeat() {
 // Close gracefully closes the gateway connection.
 func (g *Gateway) Close() {
 	g.stopHeartbeat()
+	g.stopHeartbeatTimeout()
 	g.setConnected(false)
 	g.muConn.Lock()
 	if g.conn != nil {
@@ -495,7 +592,8 @@ func (g *Gateway) getGatewayURLAndToken(ctx context.Context) (wsURL, token strin
 	}
 	req.Header.Set("Authorization", "QQBot "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	// P0-4: use dedicated httpClient with timeout instead of http.DefaultClient
+	resp, err := g.httpClient.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("request gateway: %w", err)
 	}
@@ -529,7 +627,7 @@ func (g *Gateway) saveSession() {
 	data := SessionData{
 		SessionID:        g.sessionID,
 		LastSeq:          g.lastSeq,
-		IntentLevelIndex: g.intentIndex,
+		IntentLevelIndex: g.intentIndex, // P0-1: already under muConn
 		AccountID:        g.accountID,
 		AppID:            g.appID,
 	}
