@@ -132,16 +132,17 @@ func SilkToWavBytes(silkData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create temp silk file: %w", err)
 	}
 	defer os.Remove(silkFile.Name())
+	defer silkFile.Close()
 
 	wavFile, err := os.CreateTemp("", "silk-output-*.wav")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp wav file: %w", err)
 	}
 	defer os.Remove(wavFile.Name())
+	defer wavFile.Close()
 
 	// Write silk data to temp file
 	if _, err := silkFile.Write(silkData); err != nil {
-		silkFile.Close()
 		return nil, fmt.Errorf("failed to write silk data: %w", err)
 	}
 	silkFile.Close()
@@ -166,16 +167,17 @@ func WavToSilkBytes(wavData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create temp wav file: %w", err)
 	}
 	defer os.Remove(wavFile.Name())
+	defer wavFile.Close()
 
 	silkFile, err := os.CreateTemp("", "silk-output-*.silk")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp silk file: %w", err)
 	}
 	defer os.Remove(silkFile.Name())
+	defer silkFile.Close()
 
 	// Write wav data to temp file
 	if _, err := wavFile.Write(wavData); err != nil {
-		wavFile.Close()
 		return nil, fmt.Errorf("failed to write wav data: %w", err)
 	}
 	wavFile.Close()

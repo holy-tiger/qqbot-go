@@ -1,11 +1,13 @@
 package audio
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // DefaultTTSVoice is the default Edge TTS voice.
@@ -52,7 +54,10 @@ func (p *TTSProvider) Synthesize(text string) ([]byte, error) {
 	defer os.RemoveAll(dir)
 
 	outPath := filepath.Join(dir, "output.mp3")
-	cmd := exec.Command("edge-tts",
+	// P2-10: use CommandContext with timeout, like silk.go/convert.go
+	ttsCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ttsCtx, "edge-tts",
 		"--voice", p.voice,
 		"--text", text,
 		"--write-media", outPath,
@@ -79,7 +84,10 @@ func (p *TTSProvider) SynthesizeToFile(text, outPath string) error {
 		return fmt.Errorf("tts: edge-tts not installed (pip install edge-tts)")
 	}
 
-	cmd := exec.Command("edge-tts",
+	// P2-10: use CommandContext with timeout
+	ttsCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ttsCtx, "edge-tts",
 		"--voice", p.voice,
 		"--text", text,
 		"--write-media", outPath,
